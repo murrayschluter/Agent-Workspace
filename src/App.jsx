@@ -1,0 +1,44 @@
+import { BrowserRouter, Routes, Route, Outlet } from 'react-router-dom'
+import Sidebar from './components/Sidebar'
+import Dashboard from './pages/Dashboard'
+import ListingDetail from './pages/ListingDetail'
+import { useListings } from './hooks/useListings'
+
+function Layout() {
+  const { listings, loading, error, refetch } = useListings()
+
+  const counts = loading || error
+    ? { offMarket: null, onTheMarket: null, underContract: null, archived: null }
+    : {
+        offMarket: listings.filter((l) =>
+          ['listed', 'photos_taken', 'tenants_contacted'].includes(l.stage)
+        ).length,
+        onTheMarket: listings.filter((l) => l.stage === 'launched_online').length,
+        underContract: listings.filter((l) => l.stage === 'under_contract').length,
+        archived: listings.filter((l) =>
+          ['settlement', 'archived'].includes(l.stage)
+        ).length,
+      }
+
+  return (
+    <div className="min-h-screen bg-cream-50 text-navy-900">
+      <Sidebar counts={counts} onRefresh={refetch} />
+      <main className="ml-60 px-10 py-8">
+        <Outlet context={{ listings, loading, error, refetch }} />
+      </main>
+    </div>
+  )
+}
+
+export default function App() {
+  return (
+    <BrowserRouter>
+      <Routes>
+        <Route path="/" element={<Layout />}>
+          <Route index element={<Dashboard />} />
+          <Route path="listings/:id" element={<ListingDetail />} />
+        </Route>
+      </Routes>
+    </BrowserRouter>
+  )
+}

@@ -1,0 +1,28 @@
+@import "tailwindcss";
+
+@theme {
+  --color-navy-950: #0a1224;
+  --color-navy-900: #0f1b2e;
+  --color-navy-800: #1a2942;
+  --color-navy-700: #243553;
+  --color-cream-50:  #faf7f1;
+  --color-cream-100: #f3ede1;
+  --color-cream-200: #e2d8c0;
+  --color-gold-400: #d4b574;
+  --color-gold-500: #b89b5e;
+  --color-gold-600: #9a8049;
+}
+
+body {
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Form input baseline — used in detail page edit forms */
+@layer components {
+  .input {
+    @apply w-full px-3 py-2 text-sm border border-cream-200 rounded-md
+           focus:outline-none focus:border-gold-500 focus:ring-1 focus:ring-gold-500/30
+           disabled:opacity-50;
+  }
+}
