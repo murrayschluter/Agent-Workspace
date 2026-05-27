@@ -1,0 +1,28 @@
+name: Verify main protection
+
+on:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  check-protection:
+    name: Check main is protected
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify at least one active rule on main
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          rule_count=$(gh api "repos/${{ github.repository }}/rules/branches/main" --jq 'length')
+          echo "Active rules on main: $rule_count"
+          if [ "$rule_count" -eq 0 ]; then
+            echo "::error::main is not protected by any active ruleset."
+            echo "::error::Configure a branch ruleset at: https://github.com/${{ github.repository }}/settings/rules"
+            echo "::error::Note: classic branch protection is admin-only and cannot be independently verified by non-admin reviewers. Use rulesets instead."
+            exit 1
+          fi
+          echo "main has $rule_count active rule(s) — protection verified."

@@ -44,3 +44,9 @@ Read this file before making any change to `murrayschluter/Agent-Workspace`. Two
 
 ## Uncertainty
 - If a task is ambiguous, ask the human before writing code. Do not guess and push.
+
+## Human checkpoints
+
+When this repo or a task brief says "wait until the human confirms", do **not** accept a reply of "done", "ok", "yep", or "go". The human must paste the **output of a specific verification command** that proves the state you were waiting for. If the human skips the verification, ask them to run the command and paste the result before you continue.
+
+This rule exists because soft confirmations have produced false-positives in this repo before — including the PR that installed the rest of the governance scaffolding.
