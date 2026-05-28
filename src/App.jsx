@@ -2,6 +2,8 @@ import { BrowserRouter, Routes, Route, Outlet } from 'react-router-dom'
 import Sidebar from './components/Sidebar'
 import Dashboard from './pages/Dashboard'
 import ListingDetail from './pages/ListingDetail'
+import Login from './pages/Login'
+import AuthGate from './components/auth/AuthGate'
 import { useListings } from './hooks/useListings'
 
 function Layout() {
@@ -34,9 +36,10 @@ export default function App() {
   return (
     <BrowserRouter>
       <Routes>
-        <Route path="/" element={<Layout />}>
-          <Route index element={<Dashboard />} />
-          <Route path="listings/:id" element={<ListingDetail />} />
+        <Route path="/login" element={<Login />} />
+        <Route element={<AuthGate><Layout /></AuthGate>}>
+          <Route path="/" element={<Dashboard />} />
+          <Route path="/listings/:id" element={<ListingDetail />} />
         </Route>
       </Routes>
     </BrowserRouter>
