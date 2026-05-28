@@ -4,6 +4,8 @@ import Dashboard from './pages/Dashboard'
 import ListingDetail from './pages/ListingDetail'
 import Login from './pages/Login'
 import AwaitingAccess from './pages/AwaitingAccess'
+import AuditLog from './pages/AuditLog'
+import UserManagement from './pages/UserManagement'
 import AuthGate from './components/auth/AuthGate'
 import ViewAsBanner from './components/admin/ViewAsBanner'
 import { AdminOverrideProvider } from './contexts/AdminOverrideContext'
@@ -46,6 +48,8 @@ export default function App() {
           <Route element={<AuthGate><Layout /></AuthGate>}>
             <Route path="/" element={<Dashboard />} />
             <Route path="/listings/:id" element={<ListingDetail />} />
+            <Route path="/admin/audit-log" element={<AuditLog />} />
+            <Route path="/admin/users" element={<UserManagement />} />
           </Route>
         </Routes>
       </AdminOverrideProvider>
