@@ -52,10 +52,16 @@ jobs:
         run: |
           set -euo pipefail
 
-          # SQL: for every auth-RBAC table in the public schema, check whether
-          # relrowsecurity is true. Return only tables where it's NOT true —
-          # i.e. tables that should be RLS-protected but aren't.
-          QUERY='SELECT c.relname AS table_name FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = '"'"'public'"'"' AND c.relkind = '"'"'r'"'"' AND c.relname IN ('"'"'listings'"'"', '"'"'weekly_logs'"'"', '"'"'contracts'"'"', '"'"'touchpoints'"'"', '"'"'stage_history'"'"', '"'"'documents'"'"', '"'"'custom_tasks'"'"', '"'"'listing_services'"'"', '"'"'profiles'"'"', '"'"'listing_collaborators'"'"', '"'"'admin_access_log'"'"') AND NOT c.relrowsecurity ORDER BY c.relname;'
+          # SQL: for every RLS-required table in the public schema, check
+          # whether relrowsecurity is true. Return only tables where it's NOT
+          # true — i.e. tables that should be RLS-protected but aren't.
+          #
+          # Scope: 11 auth-RBAC tables + 4 vault cache tables = 15 total.
+          # The vault tables were added 2026-05-28 alongside file 15
+          # (15_enable_rls.sql) — they're a read-only cache populated by
+          # service_role, but RLS is what enforces "anon can't read them
+          # outright" once the flip happens.
+          QUERY='SELECT c.relname AS table_name FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = '"'"'public'"'"' AND c.relkind = '"'"'r'"'"' AND c.relname IN ('"'"'listings'"'"', '"'"'weekly_logs'"'"', '"'"'contracts'"'"', '"'"'touchpoints'"'"', '"'"'stage_history'"'"', '"'"'documents'"'"', '"'"'custom_tasks'"'"', '"'"'listing_services'"'"', '"'"'profiles'"'"', '"'"'listing_collaborators'"'"', '"'"'admin_access_log'"'"', '"'"'vault_listings'"'"', '"'"'vault_listing_agents'"'"', '"'"'vault_agent_aliases'"'"', '"'"'vault_sync_runs'"'"') AND NOT c.relrowsecurity ORDER BY c.relname;'
 
           BODY=$(jq -nc --arg q "$QUERY" '{query: $q}')
 
@@ -83,13 +89,14 @@ jobs:
           MISSING_COUNT=$(echo "$RESPONSE" | jq 'length')
 
           if [ "$MISSING_COUNT" -gt 0 ]; then
-            echo "::error::$MISSING_COUNT auth-RBAC table(s) have RLS disabled on production:"
+            echo "::error::$MISSING_COUNT RLS-required table(s) have RLS disabled on production:"
             echo "$RESPONSE" | jq -r '.[] | "  - " + .table_name'
             echo "::error::"
-            echo "::error::Production deploys are blocked until RLS is enabled on all 11"
-            echo "::error::auth-RBAC tables. Apply supabase/auth/15_enable_rls.sql to production"
-            echo "::error::(Phase 6 'the flip') before merging this change."
+            echo "::error::Production deploys are blocked until RLS is enabled on all 15"
+            echo "::error::RLS-required tables (11 auth-RBAC + 4 vault). Apply"
+            echo "::error::supabase/auth/15_enable_rls.sql to production (Phase 6 'the flip')"
+            echo "::error::before merging this change."
             exit 1
           fi
 
-          echo "All 11 auth-RBAC tables have RLS enabled on production. Phase 8 gate satisfied."
+          echo "All 15 RLS-required tables have RLS enabled on production. Phase 8 gate satisfied."
