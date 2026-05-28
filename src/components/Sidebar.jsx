@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { NavLink } from 'react-router-dom'
 import NewListingModal from './NewListingModal'
+import ProfileMenu from './auth/ProfileMenu'
 
 export default function Sidebar({ counts, onRefresh }) {
   const [modalOpen, setModalOpen] = useState(false)
@@ -45,6 +46,8 @@ export default function Sidebar({ counts, onRefresh }) {
           + New Listing
         </button>
       </div>
+
+      <ProfileMenu />
 
       <NewListingModal
         isOpen={modalOpen}
