@@ -31,9 +31,27 @@ When the project moves to a Vercel Pro plan (or transfers to a Pro team), re-ena
 
 Schedule is hourly. Adjust if needed — Vault's REST API has rate limits but hourly is well within them.
 
-## Authentication note
+## Authentication
 
-The `/api/sync-vault-listings` endpoint is currently unauthenticated (anyone who can reach it can trigger a sync). On the Hobby plan that's fine because Vercel Deployment Protection wraps the whole deployment with a 401. If you upgrade to Pro and disable Deployment Protection, add a bearer-token check at the top of the handler before exposing the endpoint publicly.
+The `/api/sync-vault-listings` endpoint **requires** an `Authorization: Bearer <CRON_SECRET>` header on every call. Requests without it return 401. The handler does a constant-time comparison against the `CRON_SECRET` env var (see line ~107 of `api/sync-vault-listings.js`).
+
+This means:
+
+- **Manual triggers** (browser tab, `curl`, anything ad-hoc) must include the bearer. A browser visit alone won't work — you need a tool that sets the header, e.g. `curl -H "Authorization: Bearer <secret>" https://<deploy>/api/sync-vault-listings`.
+- **Vercel cron (when re-enabled on Pro)** automatically sets the bearer if `CRON_SECRET` is set as a Vercel environment variable. No extra config needed.
+- **No further auth changes needed at Pro upgrade** — the bearer check is already in place.
+
+### Required Vercel environment variables
+
+The function errors out at request time if any of these are missing. All must be set in the Vercel project's environment variables, in every environment (Production, Preview, Development):
+
+| Variable | Source |
+|---|---|
+| `VAULTRE_API_KEY` | Antony's `~/.openclaw/workspace/config/vault_fetcher.json` (`api_key`) |
+| `VAULTRE_BEARER_TOKEN` | Same file (`bearer_token`) |
+| `CRON_SECRET` | Generate a random ≥32-char string. Same value goes into the `Authorization: Bearer …` header for any manual or cron call. |
+| `SUPABASE_URL` | `https://<project-ref>.supabase.co` for the target Supabase project (staging or prod) |
+| `SUPABASE_SERVICE_ROLE_KEY` | Supabase Dashboard → Project Settings → API → secret key. **Never** ship to the browser. The function uses it to bypass RLS for the cache writes. |
 
 ## Alternatives considered
 
