@@ -134,29 +134,41 @@ export default async function handler(req, res) {
 
   try {
     // 1. Pull every active listing from Vault across all three statuses.
-    const pulled = await pullAllActiveListings(env, (partialReason) => {
-      // Called when a single request exhausts its retries. Don't crash — just
-      // downgrade the run to 'partial' and keep going with what we have.
-      runStatus = 'partial';
-      // Defense-in-depth: scrub even though current partial reasons don't
-      // currently contain secrets — keeps future error sources safe by default.
-      if (!errorMessage) errorMessage = scrubSecrets(env, String(partialReason));
-    });
-    counts.listings_pulled = pulled.size;
+    //    `listings` only contains data from statuses that completed cleanly;
+    //    `completedStatuses` tells softDeleteMissing which rows are in-scope.
+    const { listings, completedStatuses } = await pullAllActiveListings(
+      env,
+      (partialReason) => {
+        // Called when a single status either throws or hits the pagination cap.
+        // Don't crash — downgrade the run to 'partial' and keep going.
+        runStatus = 'partial';
+        // Defense-in-depth: scrub even though current partial reasons don't
+        // contain secrets — keeps future error sources safe by default.
+        if (!errorMessage) errorMessage = scrubSecrets(env, String(partialReason));
+      }
+    );
+    counts.listings_pulled = listings.size;
 
     // 2. Resolve every Vault staff id to a Blac user_id where we can. Done in
     //    bulk so we don't make N round-trips to profiles + aliases per agent.
-    const matchMap = await buildAgentMatchMap(supabase, pulled);
+    const matchMap = await buildAgentMatchMap(supabase, listings);
 
     // 3. Upsert listings and agent rows. Idempotent on second run.
-    const { created, updated } = await upsertListings(supabase, pulled, matchMap);
+    const { created, updated } = await upsertListings(supabase, listings, matchMap);
     counts.listings_created = created;
     counts.listings_updated = updated;
 
-    // 4. Soft-delete: anything in vault_listings whose id is NOT in this pull
-    //    and is currently active gets marked 'withdrawn'. We don't DELETE
-    //    rows — listings.vault_listing_id may still reference them.
-    counts.listings_removed = await softDeleteMissing(supabase, pulled);
+    // 4. Soft-delete: SCOPED to statuses that completed cleanly. Anything in
+    //    vault_listings whose current status is in completedStatuses and whose
+    //    id is NOT in this pull gets marked 'withdrawn'. Listings in a status
+    //    we couldn't fully pull are LEFT ALONE — withdrawing them based on an
+    //    incomplete pull would actively corrupt the cache (active listings
+    //    would appear withdrawn until the next fully-successful run).
+    counts.listings_removed = await softDeleteMissing(
+      supabase,
+      listings,
+      completedStatuses
+    );
   } catch (e) {
     runStatus = 'failure';
     errorMessage = scrubSecrets(env, String(e?.message || e)) || 'Unknown error';
@@ -241,10 +253,9 @@ async function safeVaultFetch(env, urlOrPath) {
   if (urlOrPath.startsWith('/')) {
     url = `${VAULT_BASE}${urlOrPath}`;
   } else if (urlOrPath.startsWith(`${VAULT_BASE}/`)) {
-    url = urlOrPath;
-  } else if (urlOrPath.startsWith('https://ap-southeast-2.api.vaultre.com.au/')) {
-    // Same host, defensively allowed. Vault's urls.self / urls.next include
-    // /api/v1.3/ — we accept that prefix from Vault's own responses.
+    // Fully-qualified URL returned by Vault (urls.self / urls.next, which
+    // include /api/v1.3/). Accept verbatim — the path allow-list below still
+    // checks the actual path component.
     url = urlOrPath;
   } else {
     throw new Error(`safeVaultFetch: refusing non-Vault URL: ${urlOrPath}`);
@@ -260,11 +271,15 @@ async function safeVaultFetch(env, urlOrPath) {
   // Retry loop. delays.length attempts AFTER the initial try.
   const maxAttempts = RETRY_DELAYS_MS.length + 1;
   let lastErr = null;
+  // When we honour a server Retry-After, we've already slept the right amount;
+  // skip the exponential backoff on the next iteration so we don't double-sleep.
+  let skipNextBackoff = false;
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
-    if (attempt > 0) {
+    if (attempt > 0 && !skipNextBackoff) {
       const delay = RETRY_DELAYS_MS[attempt - 1];
       await sleep(delay);
     }
+    skipNextBackoff = false;
     // Per-request timeout via AbortController. Vault has been responsive
     // (<1s typical) but a hung connection could otherwise consume the entire
     // function budget through repeated retries.
@@ -312,8 +327,11 @@ async function safeVaultFetch(env, urlOrPath) {
       if (retryAfter) {
         const seconds = Number(retryAfter);
         if (Number.isFinite(seconds) && seconds > 0) {
-          // Override the next backoff with the server-suggested delay.
+          // Server-suggested delay replaces (not augments) the exponential
+          // backoff. Setting skipNextBackoff prevents the loop from also
+          // sleeping RETRY_DELAYS_MS[attempt] on the next iteration.
           await sleep(Math.min(seconds * 1000, 60000));
+          skipNextBackoff = true;
           continue;
         }
       }
@@ -331,17 +349,30 @@ async function safeVaultFetch(env, urlOrPath) {
 
 /**
  * Pull every active listing from Vault across the three sync statuses.
- * Returns a Map<vault_listing_id, listing_item>.
+ * Returns { listings: Map<vault_listing_id, listing_item>, completedStatuses: Set<string> }.
  *
  * onPartial(reason) is called when a single status's pagination chain fails
- * after retries. We continue with what we have rather than dropping the run.
+ * (either by exception or by hitting MAX_PAGES_PER_STATUS). We continue with
+ * the other statuses rather than dropping the run.
+ *
+ * IMPORTANT: per-status data is collected into a scratch map and only merged
+ * into the returned `listings` if the status completes cleanly. Partial data
+ * from a failed status is discarded. This is what `completedStatuses` is for:
+ * the caller passes it to `softDeleteMissing` so withdrawal logic is scoped to
+ * statuses that were fully observed. Without that scoping, a transient failure
+ * on (say) `conditional` would withdraw every conditional listing because they
+ * are absent from `listings` — actively corrupting the cache.
  */
 async function pullAllActiveListings(env, onPartial) {
   const all = new Map();
+  const completedStatuses = new Set();
 
   for (const status of STATUSES_TO_SYNC) {
     let nextUrl = `/properties/sale?status=${encodeURIComponent(status)}&pagesize=${PAGE_SIZE}&page=1`;
     let pages = 0;
+    let hadError = false;
+    const statusListings = new Map();
+
     try {
       while (nextUrl && pages < MAX_PAGES_PER_STATUS) {
         const body = await safeVaultFetch(env, nextUrl);
@@ -354,23 +385,38 @@ async function pullAllActiveListings(env, onPartial) {
           if (item?.isOurListing === false) continue;
           if (!item?.id) continue;
           const vaultListingId = String(item.id);
-          // De-dupe: a listing in multiple statuses would be a Vault bug, but
-          // last write wins on the in-memory map either way.
-          all.set(vaultListingId, item);
+          statusListings.set(vaultListingId, item);
         }
         nextUrl = body?.urls?.next || null;
       }
       if (pages >= MAX_PAGES_PER_STATUS) {
+        // Pagination cap = we didn't see the whole status. Treat as incomplete.
         onPartial(`pagination cap reached for status=${status}`);
+        hadError = true;
       }
     } catch (e) {
       // Per-status failure: log it, downgrade run to 'partial', continue with
-      // remaining statuses. Better to have 2/3 statuses cached than 0/3.
+      // remaining statuses. The partial statusListings collected so far is
+      // DISCARDED below — we don't want stale half-data in the global map.
       onPartial(`failed to pull status=${status}: ${e?.message || e}`);
+      hadError = true;
     }
+
+    if (!hadError) {
+      // Status completed cleanly — merge its data into the global map and
+      // mark it as in-scope for softDeleteMissing.
+      for (const [id, item] of statusListings) {
+        all.set(id, item);
+      }
+      completedStatuses.add(status);
+    }
+    // If hadError: statusListings is dropped on the floor. The next sync run
+    // will try this status again; meanwhile its existing cached rows stay
+    // untouched (no upsert from stale data; no withdrawal because
+    // softDeleteMissing won't touch this status).
   }
 
-  return all;
+  return { listings: all, completedStatuses };
 }
 
 // ---------------------------------------------------------------------------
@@ -505,18 +551,29 @@ async function buildAgentMatchMap(supabase, listingsMap) {
   }
 
   // Layer 3: profiles.email fuzzy match (last-resort).
+  // Both sides must be lower-cased for the comparison to fire reliably.
+  // The query side (emailToStaffIds keys) is already lower-cased; profiles.email
+  // is generally lower-cased by Supabase Auth on the auth.users side, but
+  // defense-in-depth: pull all non-null emails and filter case-insensitively
+  // in JS rather than relying on .in() exact match. profiles is small (one
+  // row per Blac team member), so the full scan is cheap. If profiles ever
+  // grows past a few hundred rows, swap this for a Postgres function with
+  // lower(email) IN (...) or a generated lower(email) column with an index.
   const byEmail = new Map();
-  const emails = Array.from(emailToStaffIds.keys());
-  if (emails.length > 0) {
+  if (emailToStaffIds.size > 0) {
     const { data, error } = await supabase
       .from('profiles')
       .select('user_id, email')
-      .in('email', emails);
+      .not('email', 'is', null);
     if (error) {
       throw new Error(`profiles email lookup failed: ${error.message}`);
     }
     for (const row of data || []) {
-      byEmail.set(String(row.email).toLowerCase(), row.user_id);
+      if (!row.email) continue;
+      const lower = String(row.email).toLowerCase();
+      if (emailToStaffIds.has(lower)) {
+        byEmail.set(lower, row.user_id);
+      }
     }
   }
 
@@ -599,15 +656,25 @@ async function upsertListings(supabase, listingsMap, matchMap) {
  * because listings.vault_listing_id may point at the row. Soft-delete keeps
  * the FK valid and lets the UI keep showing the historic context.
  */
-async function softDeleteMissing(supabase, listingsMap) {
-  const incomingIds = Array.from(listingsMap.keys());
+async function softDeleteMissing(supabase, listingsMap, completedStatuses) {
+  // Murray's PR #11 review: scope withdrawal to statuses that we actually
+  // observed in full. Without this, a partial-pull run withdraws listings of
+  // the failed status — they're absent from listingsMap but still active in
+  // Vault.
+  if (!completedStatuses || completedStatuses.size === 0) {
+    // Nothing observed cleanly — don't withdraw anything.
+    return 0;
+  }
+  const statusesArray = Array.from(completedStatuses);
 
-  // Pull the current set of cached active listings (status in the three sync
-  // statuses). Anything in this set not in incomingIds is now gone from Vault.
+  // Pull the current set of cached listings whose status is in the
+  // *completed* sync statuses. Anything in this set not in listingsMap is
+  // a listing that should still be active per our completed pulls but isn't
+  // — Vault has moved it out of those statuses.
   const { data, error } = await supabase
     .from('vault_listings')
     .select('vault_listing_id')
-    .in('status', STATUSES_TO_SYNC);
+    .in('status', statusesArray);
   if (error) throw new Error(`vault_listings missing-check failed: ${error.message}`);
 
   const cachedIds = new Set((data || []).map((r) => r.vault_listing_id));
