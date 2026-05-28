@@ -7,6 +7,19 @@
 // State is in-memory only (not persisted to URL or storage). A page refresh
 // resets to default scope, which is the conservative behaviour for an
 // elevated-privilege mode.
+//
+// SCOPE NOTE on `viewAs` (per Murray's PR #12 review): this context
+// currently only tracks `viewingAsUserId`, shows the ViewAsBanner, and
+// writes the transition to admin_access_log. It does NOT yet re-scope
+// data fetching. Listing hooks (useListings, useListingDetail, etc.)
+// don't read `viewingAsUserId`, so a super_admin in "view as agent X"
+// still sees the super_admin RLS view (all data) rather than X's
+// narrowed view. View-as is intentionally banner-only in Phase 7b — the
+// data-fetching consumers will be wired up in a follow-up phase (likely
+// Phase 7e or 8) when the listing hooks are refactored to accept an
+// effective-viewer-id parameter. The audit-log entry is meaningful even
+// without re-scoping: it captures intent ("admin chose to view as X")
+// for compliance even if the actual data view is unchanged.
 
 import { createContext, useCallback, useContext, useState } from 'react'
 import { supabase } from '../lib/supabase'

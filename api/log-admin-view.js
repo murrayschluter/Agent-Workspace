@@ -67,6 +67,27 @@ export default async function handler(req, res) {
     return res.status(401).json({ error: 'Invalid session' })
   }
 
+  // Server-side super_admin gate. The RLS INSERT policy pins
+  // viewer_user_id to auth.uid() (so callers can't forge identity), but
+  // it doesn't restrict who can write. Without this check, any
+  // authenticated agent could POST and pollute admin_access_log with
+  // misleading entries attributed to themselves. Every action in
+  // ALLOWED_ACTIONS is a super_admin action, so we reject non-admins
+  // here. Defense-in-depth: 12a_admin_log_tighten.sql adds the same
+  // check to the DB policy so a direct INSERT (bypassing this endpoint)
+  // is also rejected.
+  const { data: profile, error: profileErr } = await supabase
+    .from('profiles')
+    .select('role')
+    .eq('user_id', user.id)
+    .single()
+  if (profileErr || !profile) {
+    return res.status(403).json({ error: 'Profile lookup failed' })
+  }
+  if (profile.role !== 'super_admin') {
+    return res.status(403).json({ error: 'super_admin only' })
+  }
+
   const { error: insertErr } = await supabase.from('admin_access_log').insert({
     viewer_user_id: user.id,
     viewed_user_id: viewed_user_id || null,
