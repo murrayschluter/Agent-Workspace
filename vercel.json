@@ -1,12 +1,6 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "regions": ["syd1"],
-  "crons": [
-    {
-      "path": "/api/sync-vault-listings",
-      "schedule": "0 * * * *"
-    }
-  ],
   "functions": {
     "api/sync-vault-listings.js": {
       "maxDuration": 60
