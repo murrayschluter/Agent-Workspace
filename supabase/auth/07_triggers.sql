@@ -49,9 +49,13 @@ create trigger on_auth_user_created
   for each row execute function provision_profile();
 
 -- Prevent last super_admin from demoting themselves.
+-- search_path pinned for consistency with the SECURITY DEFINER helpers and to
+-- satisfy Supabase's function_search_path_mutable linter. This is SECURITY
+-- INVOKER (default), so the pin is hygiene, not a privilege boundary.
 create or replace function prevent_last_super_admin_demotion()
 returns trigger
 language plpgsql
+set search_path = public
 as $$
 declare
   other_super_admin_count int;

@@ -2,12 +2,18 @@
 -- Audit log for admin override AND destructive actions.
 -- INSERT-only at the RLS layer once policies land (file 12). No updates, no deletes.
 
+-- All three FKs are ON DELETE SET NULL: the audit row survives the deletion
+-- of any participant (viewer, viewed user, viewed listing). This is required
+-- specifically so that super_admin can delete listings/users that have been
+-- audited — without SET NULL, the FK would block the delete or create a
+-- chicken-and-egg with logging the deletion. The human-readable identity of
+-- the deleted entity should be captured in the `details` jsonb (e.g.
+-- {"deleted_listing_address": "...", "former_owner_email": "..."}).
 create table if not exists admin_access_log (
   id                uuid primary key default gen_random_uuid(),
-  -- Audit log row must survive user deletion; nullable + ON DELETE SET NULL.
   viewer_user_id    uuid references auth.users(id) on delete set null,
-  viewed_user_id    uuid references auth.users(id),
-  viewed_listing_id uuid references listings(id),
+  viewed_user_id    uuid references auth.users(id) on delete set null,
+  viewed_listing_id uuid references listings(id)    on delete set null,
   action            text not null,
   details           jsonb,
   accessed_at       timestamptz not null default now()
