@@ -32,6 +32,16 @@ AS $$
   ORDER BY email;
 $$;
 
--- Allow any signed-in user to call this. The function itself enforces what
--- they see (only agents + super_admins; only three columns).
+-- Tighten the EXECUTE grant. The default Postgres + Supabase grants land
+-- EXECUTE on PUBLIC, anon, authenticated, postgres, AND service_role. With
+-- this function being SECURITY DEFINER and having NO guard on auth.uid()
+-- (unlike the helpers in 06_helpers.sql which short-circuit on null), an
+-- anon caller could read every agent / super_admin profile by hitting the
+-- RPC. Revoke from PUBLIC AND from anon explicitly — REVOKE FROM PUBLIC
+-- alone is not enough because Supabase grants anon EXECUTE on functions
+-- via a default-privileges hook (separate from PUBLIC).
+REVOKE EXECUTE ON FUNCTION list_invitable_profiles() FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION list_invitable_profiles() FROM anon;
 GRANT EXECUTE ON FUNCTION list_invitable_profiles() TO authenticated;
+-- service_role retains the default grant — it can call anything, and the
+-- sync function / serverless backends need that.
