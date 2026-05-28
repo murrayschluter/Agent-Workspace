@@ -57,8 +57,12 @@ export function AdminOverrideProvider({ children }) {
   }, [])
 
   const exitAdminMode = useCallback(async () => {
+    // Pass viewed_user_id at the top level (not nested in details) so the
+    // dedicated `admin_access_log.viewed_user_id` column gets populated.
+    // Audit queries that group/filter by that column would otherwise
+    // under-count exits if the field were buried in jsonb details.
     await postLog('exit_admin_mode', {
-      details: { viewingAsUserId },
+      viewed_user_id: viewingAsUserId,
     })
     setIsAdminMode(false)
     setViewingAsUserId(null)
