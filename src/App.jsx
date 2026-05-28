@@ -3,6 +3,7 @@ import Sidebar from './components/Sidebar'
 import Dashboard from './pages/Dashboard'
 import ListingDetail from './pages/ListingDetail'
 import Login from './pages/Login'
+import AwaitingAccess from './pages/AwaitingAccess'
 import AuthGate from './components/auth/AuthGate'
 import { useListings } from './hooks/useListings'
 
@@ -37,6 +38,7 @@ export default function App() {
     <BrowserRouter>
       <Routes>
         <Route path="/login" element={<Login />} />
+        <Route path="/awaiting-access" element={<AwaitingAccess />} />
         <Route element={<AuthGate><Layout /></AuthGate>}>
           <Route path="/" element={<Dashboard />} />
           <Route path="/listings/:id" element={<ListingDetail />} />
