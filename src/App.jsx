@@ -5,6 +5,8 @@ import ListingDetail from './pages/ListingDetail'
 import Login from './pages/Login'
 import AwaitingAccess from './pages/AwaitingAccess'
 import AuthGate from './components/auth/AuthGate'
+import ViewAsBanner from './components/admin/ViewAsBanner'
+import { AdminOverrideProvider } from './contexts/AdminOverrideContext'
 import { useListings } from './hooks/useListings'
 
 function Layout() {
@@ -36,14 +38,17 @@ function Layout() {
 export default function App() {
   return (
     <BrowserRouter>
-      <Routes>
-        <Route path="/login" element={<Login />} />
-        <Route path="/awaiting-access" element={<AwaitingAccess />} />
-        <Route element={<AuthGate><Layout /></AuthGate>}>
-          <Route path="/" element={<Dashboard />} />
-          <Route path="/listings/:id" element={<ListingDetail />} />
-        </Route>
-      </Routes>
+      <AdminOverrideProvider>
+        <ViewAsBanner />
+        <Routes>
+          <Route path="/login" element={<Login />} />
+          <Route path="/awaiting-access" element={<AwaitingAccess />} />
+          <Route element={<AuthGate><Layout /></AuthGate>}>
+            <Route path="/" element={<Dashboard />} />
+            <Route path="/listings/:id" element={<ListingDetail />} />
+          </Route>
+        </Routes>
+      </AdminOverrideProvider>
     </BrowserRouter>
   )
 }
