@@ -6,17 +6,20 @@
 // - Non-super_admin (or missing profile) -> redirect to /.
 // - Loads all profiles ordered by created_at ASC.
 // - Per row: role dropdown (pending / agent / super_admin); Deactivate button
-//   (confirm -> set role to 'pending').
-// - Each role change posts to /api/log-admin-view with action='role_change' and
-//   details={ previous_role, new_role, target_user_id }.
-// - Each deactivation posts action='deactivate_user' with details capturing
-//   the previous role and target user.
-// - Reassignment of the leaver's listings (owner_id) is intentionally NOT in
-//   the UI: it's a manual SQL step per the spec's leaver flow. We surface a
-//   note immediately after deactivation.
-// - Audit log writes are wrapped in try/catch so a logging failure surfaces
-//   to the operator but does not roll back the UI update (the spec marks the
-//   profiles update as the authoritative source of truth).
+//   (confirm -> set role to 'pending'). Both controls are disabled when the
+//   row is the current super_admin themselves (prevents self-downgrade /
+//   self-deactivate; `prevent_last_super_admin_demotion` is the DB-level
+//   backstop, this is the UI-level consistency fix per Murray's PR #14 flag).
+// - Each role change and deactivation goes through a SECURITY DEFINER RPC
+//   (`change_user_role` / `deactivate_user`) that performs the profile
+//   update AND the admin_access_log INSERT in one transaction. If the audit
+//   write fails, the role change is rolled back too — closing the
+//   audit-integrity gap flagged in Murray's PR #14 review (previously
+//   profiles.update + /api/log-admin-view were two separate calls and a
+//   failed audit POST left the role change committed but unaudited).
+// - Reassignment of the leaver's listings (owner_id) is intentionally NOT
+//   in the UI: it's a manual SQL step per the spec's leaver flow. We
+//   surface a note immediately after deactivation.
 
 import { useEffect, useState } from 'react'
 import { Navigate } from 'react-router-dom'
@@ -24,35 +27,6 @@ import { useProfile } from '../hooks/useProfile'
 import { supabase } from '../lib/supabase'
 
 const ROLE_OPTIONS = ['pending', 'agent', 'super_admin']
-
-async function postAuditLog(payload) {
-  const {
-    data: { session },
-  } = await supabase.auth.getSession()
-  if (!session) {
-    throw new Error('No active session for audit log POST')
-  }
-  const res = await fetch('/api/log-admin-view', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${session.access_token}`,
-    },
-    body: JSON.stringify(payload),
-  })
-  if (!res.ok) {
-    let detail = ''
-    try {
-      const body = await res.json()
-      detail = body?.error || body?.detail || ''
-    } catch {
-      // ignore
-    }
-    throw new Error(
-      `Audit log failed (HTTP ${res.status}): ${detail || 'unknown error'}`
-    )
-  }
-}
 
 function formatDate(iso) {
   if (!iso) return ''
@@ -130,41 +104,26 @@ export default function UserManagement() {
     clearError(user.user_id)
     setBusy(user.user_id, true)
 
-    const { error: updateErr } = await supabase
-      .from('profiles')
-      .update({ role: newRole })
-      .eq('user_id', user.user_id)
+    // Atomic RPC: update + audit insert in one transaction. If either
+    // fails, both are rolled back — no unaudited role changes.
+    const { error: rpcErr } = await supabase.rpc('change_user_role', {
+      target_user_id: user.user_id,
+      new_role: newRole,
+      previous_role: previousRole,
+    })
 
-    if (updateErr) {
+    if (rpcErr) {
       setBusy(user.user_id, false)
-      setError(user.user_id, updateErr.message || 'Role update failed')
+      setError(user.user_id, rpcErr.message || 'Role change failed')
       return
     }
 
-    // Optimistic local update so the dropdown reflects the new role even if
-    // the audit log POST fails below.
+    // Optimistic local update — DB is now the source of truth.
     setUsers((prev) =>
       prev.map((u) =>
         u.user_id === user.user_id ? { ...u, role: newRole } : u
       )
     )
-
-    try {
-      await postAuditLog({
-        action: 'role_change',
-        viewed_user_id: user.user_id,
-        details: {
-          previous_role: previousRole,
-          new_role: newRole,
-          target_user_id: user.user_id,
-        },
-      })
-    } catch (e) {
-      setError(
-        user.user_id,
-        `Role updated but audit log failed: ${e.message || 'unknown error'}`
-      )
-    }
     setBusy(user.user_id, false)
   }
 
@@ -180,14 +139,18 @@ export default function UserManagement() {
     setNotice(null)
     setBusy(user.user_id, true)
 
-    const { error: updateErr } = await supabase
-      .from('profiles')
-      .update({ role: 'pending' })
-      .eq('user_id', user.user_id)
+    // Atomic RPC: demote + audit insert in one transaction. The RPC
+    // additionally enforces target_user_id != auth.uid() server-side
+    // (mirrors the UI's disabled self button).
+    const { error: rpcErr } = await supabase.rpc('deactivate_user', {
+      target_user_id: user.user_id,
+      previous_role: previousRole,
+      target_email: user.email,
+    })
 
-    if (updateErr) {
+    if (rpcErr) {
       setBusy(user.user_id, false)
-      setError(user.user_id, updateErr.message || 'Deactivation failed')
+      setError(user.user_id, rpcErr.message || 'Deactivation failed')
       return
     }
 
@@ -201,23 +164,6 @@ export default function UserManagement() {
         user.display_name || user.email
       } is now pending. Reassign their listings via SQL: UPDATE listings SET owner_id = '<new>' WHERE owner_id = '${user.user_id}';`
     )
-
-    try {
-      await postAuditLog({
-        action: 'deactivate_user',
-        viewed_user_id: user.user_id,
-        details: {
-          previous_role: previousRole,
-          target_user_id: user.user_id,
-          email: user.email,
-        },
-      })
-    } catch (e) {
-      setError(
-        user.user_id,
-        `Deactivated but audit log failed: ${e.message || 'unknown error'}`
-      )
-    }
     setBusy(user.user_id, false)
   }
 
@@ -309,9 +255,14 @@ export default function UserManagement() {
                     <td className="py-2 px-3">
                       <select
                         value={u.role}
-                        disabled={busy}
+                        disabled={busy || isSelf}
+                        title={
+                          isSelf
+                            ? 'You cannot change your own role'
+                            : undefined
+                        }
                         onChange={(e) => changeRole(u, e.target.value)}
-                        className="input bg-white text-sm w-40"
+                        className="input bg-white text-sm w-40 disabled:opacity-60 disabled:cursor-not-allowed"
                       >
                         {ROLE_OPTIONS.map((r) => (
                           <option key={r} value={r}>
