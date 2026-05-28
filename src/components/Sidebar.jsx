@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { NavLink } from 'react-router-dom'
 import NewListingModal from './NewListingModal'
 import ProfileMenu from './auth/ProfileMenu'
+import AdminBadge from './admin/AdminBadge'
 
 export default function Sidebar({ counts, onRefresh }) {
   const [modalOpen, setModalOpen] = useState(false)
@@ -47,6 +48,7 @@ export default function Sidebar({ counts, onRefresh }) {
         </button>
       </div>
 
+      <AdminBadge />
       <ProfileMenu />
 
       <NewListingModal
