@@ -80,6 +80,13 @@ const MAX_PAGES_PER_STATUS = 50;
 // request, we mark the run 'partial' and skip ahead — see findings section 5.
 const RETRY_DELAYS_MS = [2000, 4000, 8000, 16000];
 
+// Per-request timeout. Vault typically responds in <1s; this caps a hung
+// connection so retries don't silently consume the function's budget. Combined
+// with the retry delays above, worst case per Vault call is 20s + 30s of backoff
+// = ~50s wall time. The cron deploy (V3) should set vercel.json maxDuration
+// accordingly (Pro: 60s default; Hobby: 10s default — Hobby will not work).
+const PER_REQUEST_TIMEOUT_MS = 20000;
+
 // ---------------------------------------------------------------------------
 // HTTP handler
 // ---------------------------------------------------------------------------
@@ -131,7 +138,9 @@ export default async function handler(req, res) {
       // Called when a single request exhausts its retries. Don't crash — just
       // downgrade the run to 'partial' and keep going with what we have.
       runStatus = 'partial';
-      if (!errorMessage) errorMessage = partialReason;
+      // Defense-in-depth: scrub even though current partial reasons don't
+      // currently contain secrets — keeps future error sources safe by default.
+      if (!errorMessage) errorMessage = scrubSecrets(env, String(partialReason));
     });
     counts.listings_pulled = pulled.size;
 
@@ -152,6 +161,9 @@ export default async function handler(req, res) {
     runStatus = 'failure';
     errorMessage = scrubSecrets(env, String(e?.message || e)) || 'Unknown error';
   } finally {
+    // Final scrub pass — paranoid but cheap. Catches any path that wrote to
+    // errorMessage without going through scrubSecrets.
+    if (errorMessage) errorMessage = scrubSecrets(env, errorMessage);
     await closeSyncRun(supabase, runId, runStatus, counts, errorMessage);
   }
 
@@ -253,6 +265,11 @@ async function safeVaultFetch(env, urlOrPath) {
       const delay = RETRY_DELAYS_MS[attempt - 1];
       await sleep(delay);
     }
+    // Per-request timeout via AbortController. Vault has been responsive
+    // (<1s typical) but a hung connection could otherwise consume the entire
+    // function budget through repeated retries.
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), PER_REQUEST_TIMEOUT_MS);
     let response;
     try {
       response = await fetch(url, {
@@ -262,15 +279,31 @@ async function safeVaultFetch(env, urlOrPath) {
           Authorization: `Bearer ${env.VAULTRE_BEARER_TOKEN}`,
           Accept: 'application/json',
         },
+        signal: controller.signal,
       });
     } catch (e) {
-      // Network-level failure (DNS, connection reset). Retry.
-      lastErr = new Error(`network error talking to Vault: ${e?.message || e}`);
+      // Network-level failure (DNS, connection reset, abort due to timeout).
+      // Retry — but cap the retries via the outer loop so we don't keep
+      // burning the function budget on a persistently dead endpoint.
+      clearTimeout(timeoutId);
+      lastErr = new Error(
+        e?.name === 'AbortError'
+          ? `Vault request timed out after ${PER_REQUEST_TIMEOUT_MS}ms`
+          : `network error talking to Vault: ${e?.message || e}`
+      );
       continue;
     }
+    clearTimeout(timeoutId);
 
     if (response.ok) {
-      return await response.json();
+      try {
+        return await response.json();
+      } catch (e) {
+        // Vault returned 200 but body wasn't valid JSON. Treat as a transient
+        // failure and retry; if it persists, the outer loop will surface it.
+        lastErr = new Error(`Vault returned non-JSON body (status ${response.status})`);
+        continue;
+      }
     }
 
     // 429 + 5xx are retryable. Honour Retry-After if Vault sends it.
