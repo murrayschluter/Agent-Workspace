@@ -39,10 +39,12 @@ export default function ShareDialog({ listingId, ownerId, onClose }) {
 
   useEffect(() => {
     refresh()
+    // PR #TBD — invite picker RPC: list_invitable_profiles() returns
+    // (user_id, email, display_name) for any agent / super_admin caller and
+    // excludes pending users. Survives the Phase 6 RLS flip where direct
+    // SELECT on profiles is no longer permitted from the client.
     supabase
-      .from('profiles')
-      .select('user_id, email, display_name')
-      .order('email')
+      .rpc('list_invitable_profiles')
       .then(({ data }) => setProfiles(data || []))
   }, [listingId, refresh])
 
