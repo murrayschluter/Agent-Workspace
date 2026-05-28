@@ -24,7 +24,7 @@ CREATE TABLE IF NOT EXISTS vault_listings (
   list_price_display  text,                      -- public price string (e.g. "Offers over $850k")
   vault_url           text,                      -- deep-link back to Vault UI
   last_synced_at      timestamptz NOT NULL DEFAULT now(),
-  raw_payload         jsonb                      -- Vault's full response for future fields (super_admin-readable only via RLS in V4)
+  raw_payload         jsonb                      -- Vault's full response for future fields (decision 2026-05-28: readable by any authenticated @blacpg user, same as the rest of the row — see 14b_vault_rls.sql)
 );
 
 CREATE INDEX IF NOT EXISTS vault_listings_status_idx ON vault_listings (status);
