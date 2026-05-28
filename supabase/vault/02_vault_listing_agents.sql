@@ -22,7 +22,11 @@ CREATE TABLE IF NOT EXISTS vault_listing_agents (
   vault_listing_id    text NOT NULL REFERENCES vault_listings(vault_listing_id) ON DELETE CASCADE,
   vault_staff_id      text NOT NULL,             -- Vault's per-staff identifier from contactStaff[].id
   vault_staff_email   text,                      -- secondary signal for human disambiguation
-  matched_user_id     uuid REFERENCES auth.users(id),  -- resolved via profiles.vault_user_id; NULL if unmatched
+  -- ON DELETE SET NULL matches the anti-leaver pattern in B.1: when a Blac
+  -- user is deleted from auth.users, this row survives with the match
+  -- severed (sync will surface it as unmatched on the next run, where a
+  -- super_admin can reassign via vault_agent_aliases).
+  matched_user_id     uuid REFERENCES auth.users(id) ON DELETE SET NULL,
   is_primary          boolean NOT NULL DEFAULT false,  -- Vault may distinguish lead agent; capture if present
   PRIMARY KEY (vault_listing_id, vault_staff_id)
 );
