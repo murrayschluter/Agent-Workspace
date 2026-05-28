@@ -92,8 +92,12 @@ const PER_REQUEST_TIMEOUT_MS = 20000;
 // ---------------------------------------------------------------------------
 
 export default async function handler(req, res) {
-  // Method gate — POST only. The Vercel cron sends POST by default.
-  if (req.method !== 'POST') {
+  // Method gate — GET or POST. Vercel cron triggers with a GET (per Vercel's
+  // current cron contract). Manual debug invocations from a terminal usually
+  // POST. Either is fine here — the side-effect-laden work happens regardless
+  // of method, and authentication is in the Authorization header (CRON_SECRET),
+  // not in the method or body.
+  if (req.method !== 'GET' && req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
