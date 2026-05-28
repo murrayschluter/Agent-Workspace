@@ -4,7 +4,8 @@
 
 create table if not exists admin_access_log (
   id                uuid primary key default gen_random_uuid(),
-  viewer_user_id    uuid not null references auth.users(id),
+  -- Audit log row must survive user deletion; nullable + ON DELETE SET NULL.
+  viewer_user_id    uuid references auth.users(id) on delete set null,
   viewed_user_id    uuid references auth.users(id),
   viewed_listing_id uuid references listings(id),
   action            text not null,

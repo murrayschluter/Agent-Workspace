@@ -8,7 +8,7 @@ create table if not exists profiles (
   email          text not null,
   display_name   text,
   role           user_role not null default 'pending',
-  vault_user_id  text,
+  vault_user_id  text,  -- Vault uses non-UUID identifiers; text accommodates any format.
   created_at     timestamptz not null default now()
 );
 

@@ -8,7 +8,12 @@ returns trigger
 language plpgsql
 as $$
 begin
-  new.updated_by = auth.uid();
+  -- Only auto-fill when called from an authenticated request context.
+  -- When auth.uid() is null (admin SQL, service-role jobs), preserve any
+  -- explicit value the caller set in the UPDATE statement.
+  if auth.uid() is not null then
+    new.updated_by = auth.uid();
+  end if;
   return new;
 end;
 $$;
@@ -23,9 +28,12 @@ create or replace function provision_profile()
 returns trigger
 language plpgsql
 security definer
+set search_path = public, auth
 as $$
 begin
-  if new.email is null or new.email not like '%@blacpg.com.au' then
+  -- Anchored, case-insensitive regex. Rejects multi-@ addresses like
+  -- 'attacker@evil@blacpg.com.au' that would pass a simple suffix LIKE.
+  if new.email is null or new.email !~* '^[^@]+@blacpg\.com\.au$' then
     raise exception 'Only @blacpg.com.au accounts may be provisioned. Got: %', new.email;
   end if;
   insert into profiles (user_id, email, role)
@@ -46,11 +54,20 @@ returns trigger
 language plpgsql
 as $$
 declare
-  super_admin_count int;
+  other_super_admin_count int;
 begin
   if old.role = 'super_admin' and new.role <> 'super_admin' then
-    select count(*) into super_admin_count from profiles where role = 'super_admin';
-    if super_admin_count <= 1 then
+    -- Lock all OTHER super_admin rows for the duration of this transaction.
+    -- This serialises concurrent demotion attempts: two simultaneous demotions
+    -- of different super_admins cannot both see count=1 of the other.
+    perform 1 from profiles
+      where role = 'super_admin' and user_id <> old.user_id
+      for update;
+
+    select count(*) into other_super_admin_count from profiles
+      where role = 'super_admin' and user_id <> old.user_id;
+
+    if other_super_admin_count = 0 then
       raise exception 'Cannot demote the last super_admin. Promote another super_admin first.';
     end if;
   end if;
@@ -58,6 +75,8 @@ begin
 end;
 $$;
 
+-- Trigger name sorts late alphabetically; if more profiles UPDATE triggers
+-- are added later, ensure none depends on this check NOT having run first.
 drop trigger if exists profiles_prevent_last_super_admin_demotion on profiles;
 create trigger profiles_prevent_last_super_admin_demotion
   before update on profiles

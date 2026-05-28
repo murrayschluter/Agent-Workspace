@@ -6,7 +6,8 @@ create table if not exists listing_collaborators (
   listing_id  uuid not null references listings(id) on delete cascade,
   user_id     uuid not null references auth.users(id) on delete cascade,
   level       collab_level not null,
-  invited_by  uuid not null references auth.users(id),
+  -- Audit-ish field: the grant survives even if the inviter is later deleted.
+  invited_by  uuid references auth.users(id) on delete set null,
   created_at  timestamptz not null default now(),
   unique (listing_id, user_id)
 );
