@@ -10,8 +10,16 @@ create policy "select_profiles" on profiles for select using (
 -- No direct INSERT policy needed — there's no human surface that inserts profiles.
 -- (We do NOT add an INSERT policy. Direct attempts will fail.)
 
--- UPDATE: super_admin can change role + display_name; users can only change display_name.
--- Use a column-level approach: full UPDATE access for super_admin; restricted for others.
+-- UPDATE policies are PERMISSIVE — Postgres combines them with OR. So an UPDATE
+-- passes RLS if EITHER policy's USING clause matches:
+--   * `update_profiles_super_admin` lets a super_admin update any row.
+--   * `update_profiles_self_display_name` lets a user update their own row.
+--
+-- The column-level restriction ("non-admins can only change display_name") is
+-- NOT enforced by these policies — RLS in Postgres can't easily express column
+-- restrictions. It IS enforced by the `prevent_self_role_change` trigger below,
+-- which rejects role/email/vault_user_id changes from non-admin actors.
+
 drop policy if exists "update_profiles_super_admin" on profiles;
 create policy "update_profiles_super_admin" on profiles for update using (
   is_super_admin(auth.uid())
@@ -21,13 +29,11 @@ drop policy if exists "update_profiles_self_display_name" on profiles;
 create policy "update_profiles_self_display_name" on profiles for update using (
   user_id = auth.uid()
 ) with check (
-  -- self-update may only change display_name (role and other columns must stay the same)
-  user_id = auth.uid()
+  user_id = auth.uid()  -- row continues to belong to the same user post-update
 );
 
--- Note: enforcing "self can only update display_name" at the policy level is awkward in
--- standard Postgres RLS. The pragmatic approach is to ALSO add a trigger that rejects
--- non-display_name changes when the actor is not super_admin. Adding that here:
+-- Column-level restriction for non-admins (see comment above on UPDATE policies).
+-- This trigger is the actual enforcement of "self-update changes display_name only".
 
 create or replace function prevent_self_role_change()
 returns trigger
