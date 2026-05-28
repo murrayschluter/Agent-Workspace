@@ -1,0 +1,95 @@
+name: Verify production RLS
+
+# Phase 8 prerequisite from spec v7. Asserts that RLS is ENABLED on every
+# auth-RBAC table on production Supabase before any deploy can proceed.
+# Without this, the "production never reachable while RLS is off" guarantee
+# rests entirely on deploy-ordering trust — same failure shape as the
+# branch-protection bug in PR #2. This converts the social contract into a
+# mechanical gate.
+#
+# Soft-fails (with a warning, not an error) when SUPABASE_ACCESS_TOKEN is
+# not yet configured. That keeps CI green during the period between this
+# workflow landing and Phase 6 actually flipping RLS on. Once the token
+# is set, the check becomes load-bearing.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  verify-rls:
+    name: Production RLS is enabled
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check for SUPABASE_ACCESS_TOKEN secret
+        id: secret-check
+        env:
+          TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF }}
+        run: |
+          if [ -z "$TOKEN" ] || [ -z "$PROJECT_REF" ]; then
+            echo "::warning::SUPABASE_ACCESS_TOKEN and/or SUPABASE_PROJECT_REF secrets are not set."
+            echo "::warning::Until both are configured in repository secrets, the production RLS"
+            echo "::warning::check is dormant. Set them after Phase 6 (the RLS flip) to make this"
+            echo "::warning::check load-bearing for Phase 8 deploys. See:"
+            echo "::warning::  https://github.com/murrayschluter/Agent-Workspace/settings/secrets/actions"
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "Both secrets present — running real RLS check."
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Query Supabase Management API for tables missing RLS
+        if: steps.secret-check.outputs.configured == 'true'
+        env:
+          TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF }}
+        run: |
+          set -euo pipefail
+
+          # SQL: for every auth-RBAC table in the public schema, check whether
+          # relrowsecurity is true. Return only tables where it's NOT true —
+          # i.e. tables that should be RLS-protected but aren't.
+          QUERY='SELECT c.relname AS table_name FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = '"'"'public'"'"' AND c.relkind = '"'"'r'"'"' AND c.relname IN ('"'"'listings'"'"', '"'"'weekly_logs'"'"', '"'"'contracts'"'"', '"'"'touchpoints'"'"', '"'"'stage_history'"'"', '"'"'documents'"'"', '"'"'custom_tasks'"'"', '"'"'listing_services'"'"', '"'"'profiles'"'"', '"'"'listing_collaborators'"'"', '"'"'admin_access_log'"'"') AND NOT c.relrowsecurity ORDER BY c.relname;'
+
+          BODY=$(jq -nc --arg q "$QUERY" '{query: $q}')
+
+          RESPONSE=$(curl -sS -X POST \
+            "https://api.supabase.com/v1/projects/${PROJECT_REF}/database/query" \
+            -H "Authorization: Bearer ${TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d "$BODY")
+
+          # Defensive: check the response was JSON before parsing.
+          if ! echo "$RESPONSE" | jq empty 2>/dev/null; then
+            echo "::error::Supabase Management API returned a non-JSON response."
+            echo "::error::Check that SUPABASE_ACCESS_TOKEN is a valid PAT and SUPABASE_PROJECT_REF is correct."
+            exit 1
+          fi
+
+          # The API returns either an array of rows OR an error object.
+          if echo "$RESPONSE" | jq -e 'has("message")' >/dev/null 2>&1; then
+            ERR=$(echo "$RESPONSE" | jq -r '.message')
+            echo "::error::Supabase Management API error: $ERR"
+            exit 1
+          fi
+
+          # Count rows. Each row is a table missing RLS.
+          MISSING_COUNT=$(echo "$RESPONSE" | jq 'length')
+
+          if [ "$MISSING_COUNT" -gt 0 ]; then
+            echo "::error::$MISSING_COUNT auth-RBAC table(s) have RLS disabled on production:"
+            echo "$RESPONSE" | jq -r '.[] | "  - " + .table_name'
+            echo "::error::"
+            echo "::error::Production deploys are blocked until RLS is enabled on all 11"
+            echo "::error::auth-RBAC tables. Apply supabase/auth/15_enable_rls.sql to production"
+            echo "::error::(Phase 6 'the flip') before merging this change."
+            exit 1
+          fi
+
+          echo "All 11 auth-RBAC tables have RLS enabled on production. Phase 8 gate satisfied."
