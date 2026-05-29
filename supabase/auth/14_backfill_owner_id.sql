@@ -13,11 +13,23 @@
 -- apply. It needs a real profile row to point owner_id at, so run it AFTER
 -- the super_admin profile is bootstrapped and BEFORE 15_enable_rls.sql.
 --
+-- !! TRIGGER NOTE (per bpg-ant's PR #21 review, reproduced on staging):
+-- listings has a BEFORE UPDATE trigger `listings_prevent_owner_reassign`
+-- (file 08 / prevent_owner_reassign) that blocks any owner_id change unless
+-- is_super_admin(auth.uid()). At migration time this runs as `postgres` with
+-- auth.uid() = NULL, so the guard would reject the backfill UPDATE. We disable
+-- just that trigger for the duration of the update and re-enable it. The whole
+-- thing is wrapped in a transaction, so if anything errors the DISABLE is
+-- rolled back and the guard is restored automatically.
+--
 -- Strategy: assign all orphan listings to the single super_admin (the
--- original sole user). Guarded so it refuses to guess if there is not
--- exactly one super_admin — in that case, edit this file to set owners
--- explicitly (or do per-agent assignment) rather than dumping everything
--- on one account.
+-- original sole user). Guarded so it refuses to guess if there is not exactly
+-- one super_admin — in that case, edit this file to set owners explicitly.
+
+begin;
+
+-- Lift the owner-reassign guard for this migration only (see TRIGGER NOTE).
+alter table listings disable trigger listings_prevent_owner_reassign;
 
 do $$
 declare
@@ -38,13 +50,19 @@ begin
   get diagnostics v_fixed = row_count;
   raise notice 'Backfilled owner_id on % listing(s) -> %', v_fixed, v_owner;
 
-  -- created_by / updated_by are audit columns (not used by RLS); backfill
-  -- them to the same owner where null, for consistency.
+  -- created_by / updated_by are audit columns (not used by RLS). set_updated_by
+  -- is a no-op here (auth.uid() is null at migration time), so these explicit
+  -- values are preserved.
   update listings
      set created_by = coalesce(created_by, v_owner),
          updated_by = coalesce(updated_by, v_owner)
    where created_by is null or updated_by is null;
 end $$;
+
+-- Restore the guard.
+alter table listings enable trigger listings_prevent_owner_reassign;
+
+commit;
 
 -- Verify (run separately) — expect 0:
 --   select count(*) from listings where owner_id is null;
