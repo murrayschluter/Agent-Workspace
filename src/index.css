@@ -21,7 +21,8 @@ body {
 /* Form input baseline — used in detail page edit forms */
 @layer components {
   .input {
-    @apply w-full px-3 py-2 text-sm border border-cream-200 rounded-md
+    @apply w-full px-3 py-2 text-sm text-navy-900 placeholder:text-navy-900/40
+           border border-cream-200 rounded-md
            focus:outline-none focus:border-gold-500 focus:ring-1 focus:ring-gold-500/30
            disabled:opacity-50;
   }
