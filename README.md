@@ -1,137 +1,66 @@
 # Listing Portal
 
-Listing lifecycle management for Blac Property Group — track each property from "Form 6 signed" through to settlement, with AI-generated vendor touchpoints (Monday Report emails + Wednesday/Friday SMS) and document storage.
+Listing lifecycle management for Blac Property Group — track each property from "Form 6 signed" through to settlement, with AI-generated vendor touchpoints (Monday Report emails + Wednesday/Friday SMS), document storage, and an optional read-only VaultRE listing cache.
 
-Single-user (Murray) for now. No auth.
+> **Coordination:** `PROJECT_SYNC.md` and `TASKS.md` at the repo root are the source of truth for current state, decisions, and who's working on what. Read them first. The production go-live runbook lives in **GitHub issue #20**.
+
+## Status (2026-06-01)
+
+- **Auth/RBAC: built and merged, not yet applied to production.** Microsoft SSO (Entra) + role-based access (super_admin / agent / pending), per-listing collaborators, admin override, audit log, and full RLS policies are all in the codebase (`supabase/auth/`). They run/verify on staging. The production database migration (apply schema → bootstrap super_admin → backfill → flip RLS) is pending a joint session — see issue #20.
+- **Deployed** on Vercel (Hobby plan), behind Vercel Deployment Protection (logged-out visitors get a 401). Production Supabase project: `jdsbqfccdgipnlvcpgva`.
+- **VaultRE integration:** read-only cache + sync function built (`supabase/vault/`, `api/sync-vault-listings.js`). Hourly cron is Pro-only, so it's disabled on Hobby — see `docs/vault-sync-scheduling.md`.
 
 ## Stack
 
 - **Frontend:** React 19 + Vite 6.4 + Tailwind v4 + React Router 7
-- **Backend:** Supabase (Postgres + Storage)
+- **Auth:** Supabase Auth → Microsoft (Azure/Entra) SSO, `@blacpg.com.au` only; app-level roles in `profiles`
+- **Backend:** Supabase (Postgres + Storage), Row Level Security
 - **AI:** Anthropic Claude `claude-sonnet-4-6` via Vercel-style serverless functions in `/api/`
 - **SMS:** ClickSend (alphanumeric / mobile sender)
 - **Email:** Code present for Resend but disabled in UI (copy-paste flow for now)
-- **Hosting:** Vercel (not yet deployed)
+- **Hosting:** Vercel (Hobby)
 
-## Quick start
+## Quick start (local dev)
 
 ```bash
-# 1. Clone + install
 git clone <repo-url>
 cd listing-portal
 npm install
-
-# 2. Copy the env template
-cp .env.example .env
-# Then edit .env and fill in real values (see below)
-
-# 3. Set up the database (one-time)
-# Open https://supabase.com/dashboard, open the SQL Editor, and run each
-# file in supabase/ in this order:
-#   1. schema.sql
-#   2. triggers.sql
-#   3. documents.sql
-#   4. custom_tasks.sql
-#   5. listing_services.sql
-#   6. (optional) seed.sql  — adds three [DEMO] listings for visual testing
-
-# 4. Run
-npm run dev
-# → http://localhost:5173
+cp .env.example .env   # fill in real values (see Env vars)
+npm run dev            # → http://localhost:5173
 ```
+
+Local dev can point at staging or prod Supabase via `.env`. Signing in requires the Microsoft SSO provider to be enabled on the target Supabase project and your origin in its redirect allowlist.
+
+### Database setup
+
+SQL lives in `supabase/`, applied via the Supabase SQL editor. Two layers:
+
+1. **Base schema** (the original single-user app): `schema.sql` → `triggers.sql` → `documents.sql` → `custom_tasks.sql` → `listing_services.sql` (+ optional `seed.sql`).
+2. **Auth/RBAC + Vault** (`supabase/auth/` 01–18 and `supabase/vault/` 01–05): the ordered migration chain that adds profiles/roles/collaborators/audit-log, ownership columns, helper functions, triggers, RLS policies, the Vault cache tables, and finally `15_enable_rls.sql` (the RLS "flip"). **Apply order and preconditions are documented in issue #20 — do not freehand this against production.** Files are idempotent (`IF NOT EXISTS` / `CREATE OR REPLACE`).
 
 ## Env vars (`.env`)
 
-See `.env.example` for the full list. Minimum to run:
+See `.env.example`. Frontend minimum: `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`, plus `VITE_SITE_URL` for OAuth redirects. Server/API: `ANTHROPIC_API_KEY`, `CLICKSEND_USERNAME` + `CLICKSEND_API_KEY`, `SMS_SENDER_NAME`. Vault sync (server): `VAULTRE_API_KEY`, `VAULTRE_BEARER_TOKEN`, `CRON_SECRET`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` (see `docs/vault-sync-scheduling.md`).
 
-| Var | Where to get it |
-|---|---|
-| `VITE_SUPABASE_URL` | Supabase → Project Settings → Data API |
-| `VITE_SUPABASE_ANON_KEY` | Supabase → Project Settings → API → Publishable key |
-| `ANTHROPIC_API_KEY` | https://console.anthropic.com/settings/keys |
-| `CLICKSEND_USERNAME` + `CLICKSEND_API_KEY` | ClickSend dashboard → API Credentials |
-| `SMS_SENDER_NAME` | Either alphanumeric (max 11 chars, e.g. `Murray`) OR a verified AU mobile number (e.g. `0498 333 604`) |
+Never commit `.env`. It's in `.gitignore`. Secrets go in the Vercel/Supabase dashboards, never in the repo.
 
-**Two ways to share env values across collaborators:**
+## Auth & access model
 
-1. **Shared backend** — copy the same `.env` between you. Simplest. You're both writing to the same Supabase + same SMS/AI accounts. Use for "two people building together on the same data."
-2. **Separate environments** — each collaborator creates their own Supabase project + own API keys. Cleaner separation. Run each SQL file in your own project once. Use for "two people building in parallel without stepping on each other."
-
-Never commit `.env`. It's in `.gitignore`.
-
-## Architecture overview
-
-```
-src/
-├── App.jsx                          # Router + Layout (sidebar + Outlet)
-├── pages/
-│   ├── Dashboard.jsx                # 4 stage sections + Today + Needs attention
-│   └── ListingDetail.jsx            # Per-listing detail page
-├── components/
-│   ├── Sidebar.jsx                  # Nav + counts + New Listing modal
-│   ├── NewListingModal.jsx
-│   ├── NeedsAttention.jsx           # Proactive AI flags (rule-based, no API call)
-│   ├── TodayTasks.jsx               # Conditions + touchpoints + custom tasks due today
-│   ├── OffMarketCard.jsx
-│   ├── OnTheMarketCard.jsx
-│   ├── UnderContractCard.jsx        # With inline Complete + Extend per condition
-│   ├── ArchivedCard.jsx
-│   ├── UrgencyDot.jsx
-│   ├── Card.jsx                     # Shared card wrapper
-│   └── detail/
-│       ├── PropertyInfo.jsx
-│       ├── Notes.jsx                # Free-form scratch pad per listing
-│       ├── StageProgression.jsx     # Stepper + transition buttons + Fell Over
-│       ├── ConditionTracker.jsx     # Conditions w/ Complete/Extend/Add/Delete
-│       ├── WeeklyLog.jsx            # Add/edit/delete weekly entries
-│       ├── Documents.jsx            # Upload + per-listing storage
-│       ├── Services.jsx             # Photographer, sign, conveyancer, etc.
-│       ├── TouchpointHistory.jsx    # Generate/edit/send via SMS/mark sent
-│       └── ContractModal.jsx        # Triggered when moving to Under Contract
-├── hooks/
-│   ├── useListings.js               # Dashboard data
-│   ├── useListing.js                # Detail page data
-│   └── useCustomTasks.js
-├── lib/
-│   ├── supabase.js                  # Singleton client
-│   ├── listings.js                  # CRUD + getListingFull(id)
-│   ├── contracts.js                 # CRUD + auto-deactivate prior active
-│   ├── weeklyLogs.js
-│   ├── touchpoints.js
-│   ├── touchpointAI.js              # Frontend wrapper for /api/generate-touchpoint
-│   ├── touchpointSend.js            # Frontend wrapper for /api/send-touchpoint
-│   ├── customTasks.js
-│   ├── documents.js                 # Supabase Storage helpers
-│   ├── listingServices.js
-│   ├── stageHistory.js
-│   └── format.js                    # Date/currency/label helpers
-├── index.css                        # Tailwind v4 + @theme palette
-└── main.jsx
-
-api/                                 # Vercel-style serverless functions
-├── generate-touchpoint.js           # Calls Claude with listing + log + open home PDFs
-└── send-touchpoint.js               # Sends SMS via ClickSend (or email via Resend)
-
-supabase/                            # SQL setup files (run in Supabase SQL editor)
-├── schema.sql                       # Tables, enums, RLS-disabled
-├── triggers.sql                     # Auto-record stage_history on listings updates
-├── documents.sql                    # Documents table + Storage bucket
-├── custom_tasks.sql                 # custom_tasks + scratch_notes column
-├── listing_services.sql             # listing_services table
-└── seed.sql                         # Optional demo data
-
-vite.config.js                       # React + Tailwind v4 + local-api plugin
-```
+- **Sign-in:** Microsoft SSO, restricted to `@blacpg.com.au`. The `provision_profile` trigger auto-creates a `pending` profile on first sign-in.
+- **Roles:** `super_admin` (full access + admin tools), `agent` (own + collaborated listings), `pending` (awaiting activation → held at an awaiting-access screen).
+- **Per-listing sharing:** `listing_collaborators` grants `viewer` / `editor` / `co_owner`.
+- **DELETE is super_admin-only** across listings + all child tables (anti-leaver safety — an agent leaving can't destroy records).
+- **Admin override:** super_admins get a "view as agent" mode; every transition is written to `admin_access_log` (immutable, super_admin-readable).
+- Enforcement is RLS in Postgres; the React layer mirrors it for UX. RLS is enabled by `supabase/auth/15_enable_rls.sql` (the production flip is pending).
 
 ## Database schema
 
-7 tables: `listings`, `weekly_logs`, `contracts`, `touchpoints`, `stage_history`, `documents`, `custom_tasks`, `listing_services`.
+**Base tables:** `listings`, `weekly_logs`, `contracts`, `touchpoints`, `stage_history`, `documents`, `custom_tasks`, `listing_services`.
+**Auth/RBAC tables:** `profiles`, `listing_collaborators`, `admin_access_log`.
+**Vault cache tables:** `vault_listings`, `vault_listing_agents`, `vault_sync_runs`, `vault_agent_aliases`.
 
-Enums: `listing_stage`, `campaign_type`, `touchpoint_type`, `document_category`, `service_type`.
-
-RLS is **disabled** on all tables (V1, single user). Adding auth + RLS policies is a Vercel-deploy prerequisite.
-
-Storage bucket: `listing-documents` (public, 10MB file limit, files keyed by UUID).
+Ownership/audit columns (`owner_id`, `created_by`, `updated_by`) added to `listings` + children. Storage bucket: `listing-documents` (being flipped to **private** during the RLS migration so the storage policies actually enforce; files keyed by `listings/{listing_id}/{filename}`).
 
 ## Stage lifecycle
 
@@ -140,30 +69,24 @@ Listed → Photos Taken → [Tenants Contacted, if tenanted] → Launched Online
        → Under Contract → Unconditional → Settlement → Archived
 ```
 
-Fell-over button reverts Under Contract / Unconditional / Settlement back to `launched_online` and marks the active contract as `is_active = false` (history preserved).
+Fell-over reverts Under Contract / Unconditional / Settlement back to `launched_online` and marks the active contract inactive (history preserved). Non-super-admins archive (stage → `archived`) rather than delete.
 
 ## How the AI touchpoint generation works
 
-`/api/generate-touchpoint.js` receives:
-- Listing context (address, vendors' first names, days on market, campaign type)
-- Most recent weekly log
-- Previous draft content (only on Regenerate)
-- Open home report PDFs uploaded in the last 14 days
+`/api/generate-touchpoint.js` receives listing context (address, vendors' first names, days on market, campaign type), the most recent weekly log, previous draft (on Regenerate), and open-home report PDFs from the last 14 days. Claude reads PDFs natively as document blocks. The system prompt enforces Murray's voice rules (no em dashes, plain-spoken, Australian English, first names only) and is cached (`cache_control: ephemeral`). Three types: Monday Report (email), Wednesday SMS, Friday SMS.
 
-Claude reads PDFs natively as document blocks. System prompt enforces Murray's voice rules (no em dashes, plain-spoken, Australian English, first names only). System prompt is cached (`cache_control: ephemeral`).
+## VaultRE sync
 
-Three touchpoint types: Monday Report (email, ~10–15 sentences), Wednesday SMS, Friday SMS (each 2–4 sentences).
+`api/sync-vault-listings.js` pulls active VaultRE listings into the `vault_*` cache (read-only against Vault: GET-only, host/path allow-listed). Auth: `Authorization: Bearer <CRON_SECRET>` (constant-time check). Scheduling/env details in `docs/vault-sync-scheduling.md`.
 
 ## Deployment
 
-Not yet deployed. Vercel is the target — `/api/*.js` files work as Vercel serverless functions natively. The custom Vite plugin in `vite.config.js` only matters for local dev.
-
-Before going live: decide on access control (Supabase Auth + RLS policies, or Vercel password protection, or keep URL private).
+Live on Vercel (Hobby), behind Deployment Protection. `/api/*.js` run as Vercel serverless functions; the Vite plugin in `vite.config.js` only matters for local dev. Go-live checklist (Vercel Pro for the cron, prod RLS flip, env-var fixes, super_admin bootstrap) is tracked in **issue #20**.
 
 ## Conventions
 
 - Tailwind v4 with `@theme` block in `src/index.css` for the navy/cream/gold palette
-- Cards stack vertically (full-width), info flows horizontally within each card
-- No em dashes in any AI-generated copy (vendor voice rule)
+- No em dashes in any AI-generated / vendor-facing copy (voice rule)
 - snake_case in DB → kept snake_case in JS (no field mapping)
 - All form errors thrown from lib functions; UI catches and displays
+- Branching / PR / review rules: see `AGENTS.md` and `PROJECT_SYNC.md`
