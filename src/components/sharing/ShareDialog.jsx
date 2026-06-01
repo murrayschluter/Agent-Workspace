@@ -29,12 +29,25 @@ export default function ShareDialog({ listingId, ownerId, onClose }) {
     )
 
   const refresh = useCallback(async () => {
-    const { data, error } = await supabase
-      .from('listing_collaborators')
-      .select('id, level, user_id, profiles!inner(email, display_name)')
-      .eq('listing_id', listingId)
+    // Was a `profiles!inner` join, but post-flip select_profiles restricts a
+    // non-admin to their OWN profile row, so the inner join dropped every other
+    // collaborator → the owner saw a near-empty list (audit #29 H3). Resolve
+    // names via the list_listing_collaborators RPC (SECURITY DEFINER, gated to
+    // owner/co_owner/super_admin), then reshape to the {profiles:{...}} form
+    // CollaboratorRow expects.
+    const { data, error } = await supabase.rpc('list_listing_collaborators', {
+      p_listing_id: listingId,
+    })
     if (error) setError(error.message)
-    else setCollaborators(data || [])
+    else
+      setCollaborators(
+        (data || []).map((r) => ({
+          id: r.id,
+          user_id: r.user_id,
+          level: r.level,
+          profiles: { email: r.email, display_name: r.display_name },
+        }))
+      )
   }, [listingId])
 
   useEffect(() => {
