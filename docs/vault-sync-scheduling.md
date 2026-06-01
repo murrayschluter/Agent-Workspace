@@ -4,7 +4,7 @@
 
 ## How it runs today
 
-- **Manual trigger** — anyone with access to the deployment can `curl` or `POST` to `/api/sync-vault-listings` to run a sync. Accepts both `GET` and `POST` so a browser open-tab works too.
+- **Manual trigger** — anyone with access to the deployment can `curl` or `POST` to `/api/sync-vault-listings` to run a sync. Accepts both `GET` and `POST`, but every call must include the `Authorization: Bearer <CRON_SECRET>` header (see Authentication below) — a plain browser visit returns 401.
 - **External cron** — Antony's existing `~/.openclaw` pipeline already pulls Vault data via a separate path; that continues to populate the systems that depend on it.
 
 ## Re-enabling cron when on Vercel Pro
