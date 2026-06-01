@@ -48,13 +48,22 @@
 -- cannot reuse can_edit_listing here; that would let editors manage sharing.
 -- The dedicated owner/co_owner helpers preserve the original semantics exactly.
 --
--- Policies rewritten (semantics unchanged — verified line-by-line against the
--- pre-fix definitions):
---   listings.select_listings
+-- Policies rewritten (all semantics-preserving against the pre-fix
+-- definitions — see the per-policy note on select_listing_collaborators):
+--   listings.select_listings                      (= can_read_listing, exact)
 --   listing_collaborators.select_listing_collaborators
 --   listing_collaborators.insert_listing_collaborators
 --   listing_collaborators.update_listing_collaborators
 --   listing_collaborators.delete_listing_collaborators
+--
+-- CORRECTION (PR #22 review): an earlier revision of this file routed
+-- select_listing_collaborators through can_read_listing, which BROADENED it
+-- (can_read_listing returns true for "any collaborator", so every collaborator
+-- would have seen the full collaborator list). The original only exposed your
+-- own row, or all rows if you own the listing. Now restored to exact original
+-- scope via is_listing_owner (see the per-policy comment below). Lesson: the
+-- "verified line-by-line" must actually expand each helper's definition — a
+-- helper that's correct for one policy (select_listings) can broaden another.
 --
 -- Applied to staging via Management API and verified: dashboard loads, all 15
 -- tables still RLS-enabled, policy quals now reference only SECURITY DEFINER
@@ -116,11 +125,24 @@ create policy "select_listings" on listings
 -- ---------------------------------------------------------------------------
 -- listing_collaborators: SELECT — was inline EXISTS into listings (the cycle)
 -- ---------------------------------------------------------------------------
+--
+-- EXACT original semantics (file 10), de-recursed via the SECURITY DEFINER
+-- owner helper. NOT can_read_listing: that helper also returns true for "any
+-- collaborator on this listing", which would broaden this policy to let every
+-- collaborator (even a viewer) read the whole collaborator list. The original
+-- deliberately scoped this to "your own row, OR all rows if you own the
+-- listing" (and spec v4 flagged the peer-hiding as intentional, pending Phase 7
+-- UI review). Caught by Murray's PR #22 review — keeping the original scope.
+--   original: is_super_admin OR user_id = auth.uid()
+--             OR EXISTS(listings WHERE id = listing_id AND owner_id = auth.uid())
+--   the third clause IS is_listing_owner(auth.uid(), listing_id).
 
 drop policy if exists "select_listing_collaborators" on listing_collaborators;
 create policy "select_listing_collaborators" on listing_collaborators
   for select using (
-    can_read_listing(auth.uid(), listing_id)
+    is_super_admin(auth.uid())
+    or user_id = auth.uid()
+    or is_listing_owner(auth.uid(), listing_id)
   );
 
 -- ---------------------------------------------------------------------------
