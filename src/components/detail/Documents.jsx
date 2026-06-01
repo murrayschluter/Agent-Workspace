@@ -6,9 +6,17 @@ import {
   DOCUMENT_CATEGORIES,
 } from '../../lib/documents'
 import { formatRelativeDate } from '../../lib/format'
+import { useProfile } from '../../hooks/useProfile'
 import Card from '../Card'
 
 export default function Documents({ listing, onUpdate }) {
+  // Document delete is super_admin-only (anti-leaver: the storage file is
+  // protected by the super_admin-only storage DELETE policy in file 13). Only
+  // show the delete button to super_admins; for everyone else it would just
+  // produce a raw RLS error (audit #29 H1). Other children broaden DELETE to
+  // can_edit_listing, but documents stay locked because of the file.
+  const { profile } = useProfile()
+  const canDelete = profile?.role === 'super_admin'
   const docs = (listing.documents ?? [])
     .slice()
     .sort((a, b) => new Date(b.uploaded_at) - new Date(a.uploaded_at))
@@ -39,14 +47,14 @@ export default function Documents({ listing, onUpdate }) {
         </p>
       ) : (
         <ul className="space-y-1.5">
-          {docs.map((d) => <DocRow key={d.id} doc={d} onUpdate={onUpdate} />)}
+          {docs.map((d) => <DocRow key={d.id} doc={d} onUpdate={onUpdate} canDelete={canDelete} />)}
         </ul>
       )}
     </Card>
   )
 }
 
-function DocRow({ doc, onUpdate }) {
+function DocRow({ doc, onUpdate, canDelete }) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
 
@@ -111,14 +119,16 @@ function DocRow({ doc, onUpdate }) {
           >
             Open
           </button>
-          <button
-            onClick={handleDelete}
-            disabled={busy}
-            className="text-xs px-2 py-1 text-navy-900/40 hover:text-rose-600 disabled:opacity-50"
-            aria-label="Delete"
-          >
-            {busy ? '…' : '✕'}
-          </button>
+          {canDelete && (
+            <button
+              onClick={handleDelete}
+              disabled={busy}
+              className="text-xs px-2 py-1 text-navy-900/40 hover:text-rose-600 disabled:opacity-50"
+              aria-label="Delete"
+            >
+              {busy ? '…' : '✕'}
+            </button>
+          )}
         </div>
       </div>
       {error && <p className="text-xs text-rose-600 mt-1 px-3">{error}</p>}
