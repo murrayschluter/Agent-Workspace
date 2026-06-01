@@ -1,6 +1,6 @@
 # PROJECT_SYNC.md — Coordination source of truth
 
-> **Read this first, every session.** This file + `TASKS.md` are how the two Claude agents coordinate. GitHub is the source of truth — not chat, not email. Last updated: **2026-06-01** by Murray's Claude (Lead Integrator).
+> **Read this first, every session.** This file + `TASKS.md` are how the two Claude agents coordinate. GitHub is the source of truth — not chat, not email. Last updated: **2026-06-01** by bpg-ant / Riyad's Claude (prior: Murray's Claude, Lead Integrator).
 
 ---
 
@@ -25,7 +25,7 @@ The fuller design specs + prod runbook live in a **separate private repo on the 
 - The app is deployed on **Vercel (Hobby plan)**; production URL `agent-workspace-blacpg-s-projects.vercel.app` (behind Vercel Deployment Protection → 401 to logged-out visitors).
 - **Prod Supabase project = `jdsbqfccdgipnlvcpgva`** ("Murray Work Dash"). It holds **real data** (9 listings, 16 touchpoints, 6 contracts, 4 weekly logs, 9 stage-history rows). Base schema only — **none of the auth/RBAC migration chain is applied to prod yet**; `auth.users` is empty.
 - **Microsoft SSO (Azure) is enabled + verified on prod** (authorize endpoint 302s to Microsoft correctly). Redirect allowlist has `http://localhost:5173` + the prod URL.
-- The **prod data migration is mid-flight** — see "Next best actions". Currently waiting on a `pg_dump` backup (Supabase Free tier has no managed snapshots).
+- The **prod data migration is staged + de-risked, paused at the snapshot/session gate** — see "Next best actions". **Pre-migration backup is now DONE** (2026-06-01, by bpg-ant): a logical data export of all prod base tables via the Management API — 44 rows + `storage.buckets` config — saved locally on the bpg-ant machine at `~/Blac/prod-backups/prod-data-backup-2026-06-01.json` (sha256 `9521233b…3ef`, NOT committed — real vendor data). The migration is now blocked only on a **session window with Murray** (his SSO sign-in for the super_admin bootstrap). The executable migration is pre-built as phase scripts in the specs repo (PHASE-B-schema / PHASE-D-backfill / PHASE-E-flip / ROLLBACK-and-smoketest), concatenated from the exact merged files and validated against prod's real schema.
 
 ## What has already been completed
 
@@ -48,7 +48,7 @@ The fuller design specs + prod runbook live in a **separate private repo on the 
 3. **Prod Supabase = `jdsbqfccdgipnlvcpgva`** is THE prod project (supersedes the earlier idea of bpg-ant standing up a separate one).
 4. **Listing ownership: all 9 prod listings are Murray's.** No split. Phase 5 backfill runs unchanged (all orphans → Murray).
 5. **Vercel stays on Hobby until launch**, then upgrade to Pro to enable the hourly Vault cron (#16 is cron-disabled on Hobby; tracked in issue #20). *Assumption made:* daily/manual sync is acceptable pre-launch. *Reason:* app isn't live; openclaw pipeline covers data pulls. *Risk:* low (no users). *How to change:* re-add `crons[]` to `vercel.json` after Pro upgrade.
-6. **Supabase prod is on Free tier → no managed backups.** Backup before the migration is a `pg_dump` (run by bpg-ant, who has DB access + tooling).
+6. **Supabase prod is on Free tier → no managed backups.** Pre-migration backup = a **logical data export via the Management API** (done 2026-06-01), in place of a full `pg_dump`. *Assumption made:* the logical data export is a sufficient backup. *Reason:* the migration is additive — it ADDs tables/columns and only mutates `owner_id` (NULL→Murray) + RLS/bucket flags, all reversible; no existing row data is deleted or transformed, so the at-risk surface is exactly the row data, which the export captures in full (44 rows). Schema lives in git. *Risk:* low — a full `pg_dump` would also capture roles/sequences/grants, not at risk here; the agent lacks the direct-connection DB password for `pg_dump`. *How to change later:* Antony runs `pg_dump` with the Supabase connection string before the flip for belt-and-suspenders.
 7. **Branch convention kept as `<type>/<owner>-<slug>`** (murray/ant), NOT switched to claude-a/claude-b. *Reason:* 24 merged PRs, the protection ruleset, and the review-routing all depend on it. The claude-a/claude-b labels map to murray/ant respectively (see table above).
 8. **Lead Integrator may self-merge SAFE coordination/governance files** (this file, `TASKS.md`, docs) using the admin bypass. *Code* changes still require cross-review (ant/* → Murray, murray/* → bpg-ant) — that cross-review has caught real bugs (#11, #6, #18, #22) and stays mandatory.
 
@@ -61,8 +61,8 @@ The fuller design specs + prod runbook live in a **separate private repo on the 
 
 ## Next best actions
 
-1. **bpg-ant:** run the `pg_dump` prod backup (requested on issue #20) → confirm saved → unblocks Phase B.
-2. **Joint session (Murray + bpg-ant):** execute the prod runbook on issue #20 — snapshot/dump → schema+policies (RLS off, vault files included) → Murray SSO sign-in + promote to sole super_admin → backfill (9 → Murray) → add bpg-ant as 2nd super_admin → flip `13`+`15` + bucket→private → smoke test. Murray's Claude verifies each gate.
+1. ~~**bpg-ant:** run the prod backup~~ — **DONE 2026-06-01** (logical export, see Decisions #6). Phase B unblocked.
+2. **Joint session (Murray + bpg-ant) — the only remaining gate to go-live:** execute the prod runbook on issue #20 — backup (done) → Phase B: schema+policies (RLS off, vault files included) → **Murray SSO sign-in (@blacpg.com.au) + promote to sole super_admin** → Phase D backfill (9 → Murray) → add bpg-ant as 2nd super_admin → Phase E flip (`13`+`15`) + bucket→private → smoke test. bpg-ant drives the SQL (phase scripts pre-built in specs repo); Murray's Claude verifies each gate. **Phases C–E are human-gated** (Murray must sign in; the RLS flip is security + irreversible). Murray was reported available 2026-06-01 — set the window and run it.
 3. **Post-migration:** set repo secrets `SUPABASE_ACCESS_TOKEN` + `SUPABASE_PROJECT_REF` (activates the prod-RLS CI gate); at launch do the Vercel Pro upgrade + env-var fix.
 
 ## Branching rules (from AGENTS.md — authoritative)
