@@ -65,7 +65,16 @@ export async function deleteDocument(doc) {
   if (error) throw error
 }
 
-export function getDocumentUrl(storagePath) {
-  const { data } = supabase.storage.from(BUCKET).getPublicUrl(storagePath)
-  return data.publicUrl
+// Signed, short-lived URL for opening/downloading a document.
+//
+// The listing-documents bucket is PRIVATE (set during the Phase 6 flip), so
+// getPublicUrl() would 404. createSignedUrl() mints a time-limited URL that
+// storage authorises against the storage RLS policies. 60s is ample to open
+// the tab; the URL isn't persisted, it's fetched per click.
+export async function getDocumentUrl(storagePath) {
+  const { data, error } = await supabase.storage
+    .from(BUCKET)
+    .createSignedUrl(storagePath, 60)
+  if (error) throw error
+  return data.signedUrl
 }

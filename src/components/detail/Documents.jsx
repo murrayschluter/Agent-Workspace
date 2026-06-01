@@ -63,6 +63,26 @@ function DocRow({ doc, onUpdate }) {
     }
   }
 
+  async function handleOpen() {
+    // The bucket is private, so we mint a signed URL per click. Open the tab
+    // synchronously (about:blank) BEFORE awaiting, so the popup blocker doesn't
+    // eat it; then point it at the signed URL once we have it.
+    const w = window.open('about:blank', '_blank')
+    if (w) w.opener = null
+    try {
+      setBusy(true)
+      setError(null)
+      const url = await getDocumentUrl(doc.storage_path)
+      if (w) w.location = url
+      else window.location.assign(url) // fallback if the popup was blocked
+    } catch (e) {
+      setError(e.message)
+      if (w) w.close()
+    } finally {
+      setBusy(false)
+    }
+  }
+
   return (
     <li>
       <div className="flex items-center justify-between gap-3 px-3 py-2 rounded border border-cream-200 bg-cream-50/40 hover:bg-white transition">
@@ -84,14 +104,13 @@ function DocRow({ doc, onUpdate }) {
           </div>
         </div>
         <div className="flex items-center gap-1 shrink-0">
-          <a
-            href={getDocumentUrl(doc.storage_path)}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-xs px-2 py-1 rounded text-navy-900/60 hover:text-gold-600"
+          <button
+            onClick={handleOpen}
+            disabled={busy}
+            className="text-xs px-2 py-1 rounded text-navy-900/60 hover:text-gold-600 disabled:opacity-50"
           >
             Open
-          </a>
+          </button>
           <button
             onClick={handleDelete}
             disabled={busy}
