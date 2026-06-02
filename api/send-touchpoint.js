@@ -84,10 +84,21 @@ async function sendSms({ body, recipients, senderName }) {
 }
 
 function getSupabase() {
-  const url = process.env.VITE_SUPABASE_URL
-  const key = process.env.VITE_SUPABASE_ANON_KEY
-  if (!url || !key) throw new Error('Supabase env vars missing on server.')
-  return createClient(url, key)
+  // Service-role, NOT anon. This is a trusted server-side endpoint marking a
+  // touchpoint sent after the SMS/email actually went out. Post-RLS-flip the
+  // touchpoints UPDATE policy is can_edit_listing(auth.uid(), listing_id); with
+  // the anon key there is no JWT, so auth.uid() is NULL and the update silently
+  // affects 0 rows — the vendor gets the message but the app never records
+  // sent_at. Service-role bypasses RLS, which is correct for this server action.
+  // (Authz hardening — verifying the caller's JWT before sending — is tracked
+  // as a follow-up; today the endpoint is gated by Vercel Deployment Protection.)
+  const url = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY
+  if (!url || !key)
+    throw new Error(
+      'Supabase env vars missing on server (SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY).'
+    )
+  return createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false } })
 }
 
 export default async function handler(req, res) {

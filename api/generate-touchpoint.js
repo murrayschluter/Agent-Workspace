@@ -86,14 +86,19 @@ const MAX_TOKENS = {
 
 const BUCKET = 'listing-documents'
 
-// Lazy Supabase client for the API handler (reads via anon key).
+// Lazy Supabase client for the API handler. Service-role, NOT anon: this
+// reads open-home PDFs from the listing-documents bucket to give the AI context.
+// Post-flip that bucket is PRIVATE and storage RLS requires auth.uid(); the anon
+// key has no JWT, so the download is denied and the per-doc try/catch swallows
+// it — the AI silently loses document grounding. Service-role authorises the
+// read. (Server-side only; the key never reaches the client bundle.)
 function getStorageClient() {
-  const url = process.env.VITE_SUPABASE_URL
-  const key = process.env.VITE_SUPABASE_ANON_KEY
+  const url = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY
   if (!url || !key) {
-    throw new Error('Supabase env vars missing on server (VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY).')
+    throw new Error('Supabase env vars missing on server (SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY).')
   }
-  return createClient(url, key)
+  return createClient(url, key, { auth: { persistSession: false } })
 }
 
 async function fetchDocumentBase64(supabase, storagePath) {
