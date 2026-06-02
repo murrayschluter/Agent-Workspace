@@ -1,6 +1,17 @@
 // Calls /api/generate-touchpoint with listing context + document refs.
 // The API handler fetches the document bytes from Supabase Storage itself
-// (using the same anon key), so we only send lightweight metadata here.
+// (scoped to the caller's session), so we only send lightweight metadata here.
+import { supabase } from './supabase'
+
+async function authHeader() {
+  const {
+    data: { session },
+  } = await supabase.auth.getSession()
+  const token = session?.access_token
+  if (!token) throw new Error('You must be signed in to generate a message.')
+  return { Authorization: `Bearer ${token}` }
+}
+
 export async function generateTouchpoint({
   type,
   listing,
@@ -10,9 +21,10 @@ export async function generateTouchpoint({
 }) {
   const res = await fetch('/api/generate-touchpoint', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...(await authHeader()) },
     body: JSON.stringify({
       type,
+      listingId: listing.id,
       listing: {
         address: listing.address,
         vendor_names: listing.vendor_names,

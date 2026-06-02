@@ -83,11 +83,22 @@ async function sendSms({ body, recipients, senderName }) {
   return { provider: 'clicksend', messages: data.data?.messages }
 }
 
-function getSupabase() {
-  const url = process.env.VITE_SUPABASE_URL
-  const key = process.env.VITE_SUPABASE_ANON_KEY
-  if (!url || !key) throw new Error('Supabase env vars missing on server.')
-  return createClient(url, key)
+function getEnv() {
+  const url = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL
+  const anonKey =
+    process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY
+  return { url, anonKey }
+}
+
+// Supabase client scoped to the caller's JWT, so RLS decides what they can
+// read/update. Never use the service role here — that would bypass RLS.
+function getUserClient(jwt) {
+  const { url, anonKey } = getEnv()
+  if (!url || !anonKey) throw new Error('Supabase env vars missing on server.')
+  return createClient(url, anonKey, {
+    global: { headers: { Authorization: `Bearer ${jwt}` } },
+    auth: { persistSession: false, autoRefreshToken: false },
+  })
 }
 
 export default async function handler(req, res) {
@@ -95,18 +106,62 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: 'Method not allowed' })
   }
 
+  // --- Authentication: require a signed-in user. Without this, anyone on the
+  // internet could send SMS/email on our accounts to arbitrary recipients. ---
+  const authHeader = req.headers.authorization || ''
+  const jwt = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null
+  if (!jwt) return res.status(401).json({ error: 'Sign-in required' })
+
   const {
     touchpointId,
     channel, // 'email' | 'sms'
     content,
-    recipients, // array: emails or phones
   } = req.body ?? {}
 
   if (!touchpointId) return res.status(400).json({ error: 'touchpointId required' })
   if (!channel) return res.status(400).json({ error: 'channel required' })
   if (!content) return res.status(400).json({ error: 'content required' })
+  if (channel !== 'email' && channel !== 'sms') {
+    return res.status(400).json({ error: `Unknown channel: ${channel}` })
+  }
+
+  let supabase
+  try {
+    supabase = getUserClient(jwt)
+  } catch (e) {
+    return res.status(500).json({ error: e.message })
+  }
+
+  // Validate session.
+  const { data: authUser, error: authErr } = await supabase.auth.getUser()
+  if (authErr || !authUser?.user) {
+    return res.status(401).json({ error: 'Invalid session' })
+  }
+
+  // Look up the touchpoint under the caller's JWT. RLS returns it only if the
+  // user may access the parent listing, which authorises the send. We then
+  // derive recipients from the listing record SERVER-SIDE — we never trust a
+  // caller-supplied recipient list, so this endpoint cannot be used to message
+  // arbitrary numbers/addresses.
+  const { data: tp, error: tpErr } = await supabase
+    .from('touchpoints')
+    .select('id, listing_id, listings ( vendor_emails, vendor_phones )')
+    .eq('id', touchpointId)
+    .maybeSingle()
+  if (tpErr) {
+    return res.status(500).json({ error: 'Touchpoint lookup failed', detail: tpErr.message })
+  }
+  if (!tp) {
+    return res.status(403).json({ error: 'Not authorised for this touchpoint' })
+  }
+
+  const vendorEmails = tp.listings?.vendor_emails ?? []
+  const vendorPhones = tp.listings?.vendor_phones ?? []
+  const recipients = channel === 'email' ? vendorEmails : vendorPhones
   if (!Array.isArray(recipients) || recipients.length === 0) {
-    return res.status(400).json({ error: 'recipients required' })
+    return res.status(400).json({
+      error: `No vendor ${channel === 'email' ? 'email' : 'phone'} on file for this listing`,
+    })
   }
 
   try {
@@ -139,8 +194,8 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: `Unknown channel: ${channel}` })
     }
 
-    // Mark touchpoint as sent (and persist the final content the user actually sent)
-    const supabase = getSupabase()
+    // Mark touchpoint as sent (and persist the final content the user actually
+    // sent), under the same JWT-scoped client so RLS still applies.
     const { error: updateError } = await supabase
       .from('touchpoints')
       .update({
