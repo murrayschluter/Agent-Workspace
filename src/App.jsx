@@ -6,6 +6,7 @@ import Login from './pages/Login'
 import AwaitingAccess from './pages/AwaitingAccess'
 import AuditLog from './pages/AuditLog'
 import UserManagement from './pages/UserManagement'
+import VaultPicker from './pages/VaultPicker'
 import AuthGate from './components/auth/AuthGate'
 import ViewAsBanner from './components/admin/ViewAsBanner'
 import { AdminOverrideProvider } from './contexts/AdminOverrideContext'
@@ -47,6 +48,7 @@ export default function App() {
           <Route path="/awaiting-access" element={<AwaitingAccess />} />
           <Route element={<AuthGate><Layout /></AuthGate>}>
             <Route path="/" element={<Dashboard />} />
+            <Route path="/vault" element={<VaultPicker />} />
             <Route path="/listings/:id" element={<ListingDetail />} />
             <Route path="/admin/audit-log" element={<AuditLog />} />
             <Route path="/admin/users" element={<UserManagement />} />

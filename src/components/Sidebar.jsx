@@ -29,6 +29,19 @@ export default function Sidebar({ counts, onRefresh }) {
           Dashboard
         </NavLink>
 
+        <NavLink
+          to="/vault"
+          className={({ isActive }) =>
+            `flex items-center px-3 py-2 mt-1 rounded-md text-sm transition ${
+              isActive
+                ? 'bg-navy-800 text-gold-400'
+                : 'text-cream-100/80 hover:bg-navy-800/60'
+            }`
+          }
+        >
+          Add from Vault
+        </NavLink>
+
         <div className="pt-6 pb-2 px-3 text-[11px] uppercase tracking-wider text-cream-100/40">
           By stage
         </div>
