@@ -86,14 +86,27 @@ const MAX_TOKENS = {
 
 const BUCKET = 'listing-documents'
 
-// Lazy Supabase client for the API handler (reads via anon key).
-function getStorageClient() {
-  const url = process.env.VITE_SUPABASE_URL
-  const key = process.env.VITE_SUPABASE_ANON_KEY
-  if (!url || !key) {
+function getEnv() {
+  const url = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL
+  const anonKey =
+    process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY
+  return { url, anonKey }
+}
+
+// Supabase client scoped to the caller's JWT. Using the anon key + the user's
+// token (NOT the service role) keeps Row-Level Security in force: the user can
+// only read listings/documents they're allowed to. This both authenticates the
+// request and — once storage RLS is enabled — restricts document downloads to
+// the caller's own listings.
+function getUserClient(jwt) {
+  const { url, anonKey } = getEnv()
+  if (!url || !anonKey) {
     throw new Error('Supabase env vars missing on server (VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY).')
   }
-  return createClient(url, key)
+  return createClient(url, anonKey, {
+    global: { headers: { Authorization: `Bearer ${jwt}` } },
+    auth: { persistSession: false, autoRefreshToken: false },
+  })
 }
 
 async function fetchDocumentBase64(supabase, storagePath) {
@@ -115,7 +128,16 @@ export default async function handler(req, res) {
     })
   }
 
-  const { type, listing, weeklyLog, previousTouchpoint, documents = [] } = req.body ?? {}
+  // --- Authentication: require a signed-in user (Supabase JWT). Without this
+  // the endpoint is open to the public internet and could be used to pull any
+  // vendor's documents into the model. ---
+  const authHeader = req.headers.authorization || ''
+  const jwt = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null
+  if (!jwt) {
+    return res.status(401).json({ error: 'Sign-in required' })
+  }
+
+  const { type, listingId, listing, weeklyLog, previousTouchpoint, documents = [] } = req.body ?? {}
 
   if (!type || !SYSTEM_PROMPTS[type]) {
     return res.status(400).json({ error: `Unknown touchpoint type: ${type}` })
@@ -123,17 +145,52 @@ export default async function handler(req, res) {
   if (!listing) {
     return res.status(400).json({ error: 'Missing listing context' })
   }
+  if (!listingId) {
+    return res.status(400).json({ error: 'Missing listingId' })
+  }
+
+  let supabaseUser
+  try {
+    supabaseUser = getUserClient(jwt)
+  } catch (e) {
+    return res.status(500).json({ error: e.message })
+  }
+
+  // Validate the session and authorise the caller against THIS listing. The
+  // select runs under the user's JWT, so RLS returns the row only if the user
+  // is allowed to see it; no row -> not authorised.
+  const { data: authUser, error: authErr } = await supabaseUser.auth.getUser()
+  if (authErr || !authUser?.user) {
+    return res.status(401).json({ error: 'Invalid session' })
+  }
+  const { data: allowedListing, error: listingErr } = await supabaseUser
+    .from('listings')
+    .select('id')
+    .eq('id', listingId)
+    .maybeSingle()
+  if (listingErr) {
+    return res.status(500).json({ error: 'Listing lookup failed', detail: listingErr.message })
+  }
+  if (!allowedListing) {
+    return res.status(403).json({ error: 'Not authorised for this listing' })
+  }
 
   try {
     // Fetch any attached documents from Supabase Storage as base64.
     // Only PDFs are sent to Claude (image support could be added later).
     const docBlocks = []
     if (documents.length > 0) {
-      const storage = getStorageClient()
       for (const doc of documents) {
         if (!doc.mime_type?.includes('pdf')) continue
+        // Only allow documents under this listing's storage prefix
+        // ({listingId}/...). Belt-and-braces alongside storage RLS: stops a
+        // signed-in user pulling another listing's files by passing a path.
+        if (!doc.storage_path || !doc.storage_path.startsWith(`${listingId}/`)) {
+          console.warn(`[generate-touchpoint] skipped doc outside listing prefix: ${doc.storage_path}`)
+          continue
+        }
         try {
-          const base64 = await fetchDocumentBase64(storage, doc.storage_path)
+          const base64 = await fetchDocumentBase64(supabaseUser, doc.storage_path)
           docBlocks.push({
             type: 'document',
             source: {

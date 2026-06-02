@@ -149,7 +149,6 @@ function DraftTouchpoint({ t, listing, latestLog, reportsForAi, onUpdate }) {
         touchpointId: t.id,
         channel,
         content,
-        recipients,
       })
       onUpdate?.()
     } catch (e) {
