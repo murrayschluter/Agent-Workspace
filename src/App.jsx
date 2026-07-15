@@ -1,16 +1,30 @@
+import { lazy, Suspense } from 'react'
 import { BrowserRouter, Routes, Route, Outlet } from 'react-router-dom'
 import Sidebar from './components/Sidebar'
-import Dashboard from './pages/Dashboard'
-import ListingDetail from './pages/ListingDetail'
-import Login from './pages/Login'
-import AwaitingAccess from './pages/AwaitingAccess'
-import AuditLog from './pages/AuditLog'
-import UserManagement from './pages/UserManagement'
-import VaultPicker from './pages/VaultPicker'
 import AuthGate from './components/auth/AuthGate'
 import ViewAsBanner from './components/admin/ViewAsBanner'
 import { AdminOverrideProvider } from './contexts/AdminOverrideContext'
 import { useListings } from './hooks/useListings'
+
+const Dashboard = lazy(() => import('./pages/Dashboard'))
+const ListingDetail = lazy(() => import('./pages/ListingDetail'))
+const Login = lazy(() => import('./pages/Login'))
+const AwaitingAccess = lazy(() => import('./pages/AwaitingAccess'))
+const AuditLog = lazy(() => import('./pages/AuditLog'))
+const UserManagement = lazy(() => import('./pages/UserManagement'))
+const VaultPicker = lazy(() => import('./pages/VaultPicker'))
+
+function RouteFallback() {
+  return (
+    <div className="flex min-h-[40vh] items-center justify-center text-sm text-navy-900/50">
+      Loading workspace…
+    </div>
+  )
+}
+
+function Page({ children }) {
+  return <Suspense fallback={<RouteFallback />}>{children}</Suspense>
+}
 
 function Layout() {
   const { listings, loading, error, refetch } = useListings()
@@ -44,14 +58,14 @@ export default function App() {
       <AdminOverrideProvider>
         <ViewAsBanner />
         <Routes>
-          <Route path="/login" element={<Login />} />
-          <Route path="/awaiting-access" element={<AwaitingAccess />} />
+          <Route path="/login" element={<Page><Login /></Page>} />
+          <Route path="/awaiting-access" element={<Page><AwaitingAccess /></Page>} />
           <Route element={<AuthGate><Layout /></AuthGate>}>
-            <Route path="/" element={<Dashboard />} />
-            <Route path="/vault" element={<VaultPicker />} />
-            <Route path="/listings/:id" element={<ListingDetail />} />
-            <Route path="/admin/audit-log" element={<AuditLog />} />
-            <Route path="/admin/users" element={<UserManagement />} />
+            <Route path="/" element={<Page><Dashboard /></Page>} />
+            <Route path="/vault" element={<Page><VaultPicker /></Page>} />
+            <Route path="/listings/:id" element={<Page><ListingDetail /></Page>} />
+            <Route path="/admin/audit-log" element={<Page><AuditLog /></Page>} />
+            <Route path="/admin/users" element={<Page><UserManagement /></Page>} />
           </Route>
         </Routes>
       </AdminOverrideProvider>
