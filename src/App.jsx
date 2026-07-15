@@ -31,7 +31,7 @@ function Layout() {
   return (
     <div className="min-h-screen bg-cream-50 text-navy-900">
       <Sidebar counts={counts} onRefresh={refetch} />
-      <main className="ml-60 px-10 py-8">
+      <main className="px-4 pb-8 pt-20 sm:px-6 md:ml-60 md:px-8 md:py-8 lg:px-10">
         <Outlet context={{ listings, loading, error, refetch }} />
       </main>
     </div>

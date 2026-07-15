@@ -67,7 +67,7 @@ export default function VaultPicker() {
 
   return (
     <div className="max-w-5xl space-y-4">
-      <header className="flex items-end justify-between">
+      <header className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="text-2xl font-semibold text-navy-900">Add from Vault</h1>
           <p className="text-sm text-navy-900/60 mt-1">
@@ -105,7 +105,7 @@ export default function VaultPicker() {
           </p>
         ) : (
           <>
-            <div className="flex items-center justify-between gap-3 pb-3 mb-2 border-b border-cream-200">
+            <div className="mb-2 flex flex-col gap-3 border-b border-cream-200 pb-3 sm:flex-row sm:items-center sm:justify-between">
               <label className="inline-flex items-center gap-2 text-sm text-navy-900/80 cursor-pointer">
                 <input
                   type="checkbox"
@@ -119,7 +119,7 @@ export default function VaultPicker() {
                 type="button"
                 onClick={add}
                 disabled={selected.size === 0 || busy}
-                className="text-sm px-4 py-2 rounded-md bg-navy-900 text-white hover:bg-navy-800 disabled:opacity-40 disabled:cursor-not-allowed"
+                className="min-h-11 w-full rounded-md bg-navy-900 px-4 py-2 text-sm text-white hover:bg-navy-800 disabled:cursor-not-allowed disabled:opacity-40 sm:w-auto"
               >
                 {busy ? 'Adding...' : `Add ${selected.size} selected`}
               </button>
@@ -129,7 +129,7 @@ export default function VaultPicker() {
               {rows.map((r) => (
                 <li
                   key={r.vault_listing_id}
-                  className="flex items-center gap-3 py-2.5"
+                  className="flex items-start gap-3 py-3 sm:items-center"
                 >
                   <input
                     type="checkbox"
