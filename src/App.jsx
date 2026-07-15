@@ -10,6 +10,7 @@ import VaultPicker from './pages/VaultPicker'
 import AuthGate from './components/auth/AuthGate'
 import ViewAsBanner from './components/admin/ViewAsBanner'
 import { AdminOverrideProvider } from './contexts/AdminOverrideContext'
+import { AuthProvider } from './contexts/AuthContext'
 import { useListings } from './hooks/useListings'
 
 function Layout() {
@@ -40,21 +41,23 @@ function Layout() {
 
 export default function App() {
   return (
-    <BrowserRouter>
-      <AdminOverrideProvider>
-        <ViewAsBanner />
-        <Routes>
-          <Route path="/login" element={<Login />} />
-          <Route path="/awaiting-access" element={<AwaitingAccess />} />
-          <Route element={<AuthGate><Layout /></AuthGate>}>
-            <Route path="/" element={<Dashboard />} />
-            <Route path="/vault" element={<VaultPicker />} />
-            <Route path="/listings/:id" element={<ListingDetail />} />
-            <Route path="/admin/audit-log" element={<AuditLog />} />
-            <Route path="/admin/users" element={<UserManagement />} />
-          </Route>
-        </Routes>
-      </AdminOverrideProvider>
-    </BrowserRouter>
+    <AuthProvider>
+      <BrowserRouter>
+        <AdminOverrideProvider>
+          <ViewAsBanner />
+          <Routes>
+            <Route path="/login" element={<Login />} />
+            <Route path="/awaiting-access" element={<AwaitingAccess />} />
+            <Route element={<AuthGate><Layout /></AuthGate>}>
+              <Route path="/" element={<Dashboard />} />
+              <Route path="/vault" element={<VaultPicker />} />
+              <Route path="/listings/:id" element={<ListingDetail />} />
+              <Route path="/admin/audit-log" element={<AuditLog />} />
+              <Route path="/admin/users" element={<UserManagement />} />
+            </Route>
+          </Routes>
+        </AdminOverrideProvider>
+      </BrowserRouter>
+    </AuthProvider>
   )
 }
