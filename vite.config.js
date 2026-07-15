@@ -56,4 +56,8 @@ function localApiPlugin() {
 
 export default defineConfig({
   plugins: [react(), tailwindcss(), localApiPlugin()],
+  test: {
+    environment: 'jsdom',
+    setupFiles: ['./src/test/setup.js'],
+  },
 })
