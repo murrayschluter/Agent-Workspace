@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { listVaultListings, addVaultListingsAsTracked } from '../lib/vault'
+import { listVaultListings, addVaultListingsAsTracked, getLatestVaultSync } from '../lib/vault'
 import Card from '../components/Card'
 
 // Phase V5 — "Add from Vault" screen.
@@ -13,12 +13,23 @@ export default function VaultPicker() {
   const [error, setError] = useState(null)
   const [busy, setBusy] = useState(false)
   const [notice, setNotice] = useState(null)
+  const [latestSync, setLatestSync] = useState(null)
+  const [syncStatusError, setSyncStatusError] = useState(false)
 
   const refresh = async () => {
     setLoading(true)
     setError(null)
+    setSyncStatusError(false)
     try {
-      setRows(await listVaultListings())
+      const [nextRows, syncResult] = await Promise.all([
+        listVaultListings(),
+        getLatestVaultSync().catch(() => {
+          setSyncStatusError(true)
+          return null
+        }),
+      ])
+      setRows(nextRows)
+      setLatestSync(syncResult)
       setSelected(new Set())
     } catch (e) {
       setError(e.message)
@@ -85,6 +96,8 @@ export default function VaultPicker() {
           Refresh
         </button>
       </header>
+
+      <SyncStatus sync={latestSync} unavailable={syncStatusError} loading={loading} />
 
       {notice && (
         <div className="rounded-md border border-gold-500/40 bg-gold-400/10 p-3">
@@ -166,6 +179,57 @@ export default function VaultPicker() {
           </>
         )}
       </Card>
+    </div>
+  )
+}
+
+function SyncStatus({ sync, unavailable, loading }) {
+  if (loading) return null
+
+  if (unavailable) {
+    return (
+      <div className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+        Vault listings loaded, but sync status is temporarily unavailable.
+      </div>
+    )
+  }
+
+  if (!sync) {
+    return (
+      <div className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+        Vault has not completed its first sync yet.
+      </div>
+    )
+  }
+
+  const timestamp = sync.finished_at || sync.started_at
+  const ageMs = Date.now() - new Date(timestamp).getTime()
+  const stale = ageMs > 2 * 60 * 60 * 1000
+  const failed = sync.status === 'failure' || sync.status === 'partial'
+  const running = sync.status === 'running'
+  const tone = failed || stale
+    ? 'border-amber-300 bg-amber-50 text-amber-900'
+    : running
+      ? 'border-blue-200 bg-blue-50 text-blue-900'
+      : 'border-emerald-200 bg-emerald-50 text-emerald-900'
+
+  return (
+    <div className={`flex flex-wrap items-center justify-between gap-2 rounded-md border px-3 py-2 text-sm ${tone}`}>
+      <span>
+        {running ? 'Vault sync is running' : failed ? 'Latest Vault sync needs attention' : 'Vault is up to date'}
+        {!running && ` · ${new Date(timestamp).toLocaleString('en-AU', {
+          day: 'numeric',
+          month: 'short',
+          hour: 'numeric',
+          minute: '2-digit',
+        })}`}
+      </span>
+      {!running && sync.listings_pulled != null && (
+        <span className="text-xs opacity-70">{sync.listings_pulled} listings checked</span>
+      )}
+      {stale && !failed && !running && (
+        <span className="w-full text-xs font-medium">Data is more than two hours old.</span>
+      )}
     </div>
   )
 }
