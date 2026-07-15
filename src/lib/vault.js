@@ -9,6 +9,17 @@ import { supabase } from './supabase'
 
 const CAMPAIGN_TYPES = new Set(['private_treaty', 'auction', 'eoi'])
 
+export async function getLatestVaultSync() {
+  const { data, error } = await supabase
+    .from('vault_sync_runs')
+    .select('id, started_at, finished_at, status, listings_pulled, listings_created, listings_updated')
+    .order('started_at', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+  if (error) throw error
+  return data
+}
+
 // Pull synced Vault listings and flag which are already tracked.
 // "Tracked" is judged against the listings the current user can see under RLS.
 export async function listVaultListings() {
