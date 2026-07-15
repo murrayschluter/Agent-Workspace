@@ -2,13 +2,13 @@
 
 Listing lifecycle management for Blac Property Group — track each property from "Form 6 signed" through to settlement, with AI-generated vendor touchpoints (Monday Report emails + Wednesday/Friday SMS), document storage, and an optional read-only VaultRE listing cache.
 
-> **Coordination:** `PROJECT_SYNC.md` and `TASKS.md` at the repo root are the source of truth for current state, decisions, and who's working on what. Read them first. The production go-live runbook lives in **GitHub issue #20**.
+> **Coordination:** `PROJECT_SYNC.md` and `TASKS.md` at the repo root are the source of truth for current state, decisions, and who's working on what. Read them first. GitHub issue #20 now tracks the remaining Vercel scheduling decision.
 
-## Status (2026-06-01)
+## Status (2026-07-16)
 
-- **Auth/RBAC: built and merged, not yet applied to production.** Microsoft SSO (Entra) + role-based access (super_admin / agent / pending), per-listing collaborators, admin override, audit log, and full RLS policies are all in the codebase (`supabase/auth/`). They run/verify on staging. The production database migration (apply schema → bootstrap super_admin → backfill → flip RLS) is pending a joint session — see issue #20.
+- **Auth/RBAC is live on production.** Microsoft SSO (Entra), role-based access (super_admin / agent / pending), per-listing collaborators, admin override, audit log and RLS are enabled. The production flip completed 2026-06-02 and all 15 protected tables were verified.
 - **Deployed** on Vercel (Hobby plan), behind Vercel Deployment Protection (logged-out visitors get a 401). Production Supabase project: `jdsbqfccdgipnlvcpgva`.
-- **VaultRE integration:** read-only cache + sync function built (`supabase/vault/`, `api/sync-vault-listings.js`). Hourly cron is Pro-only, so it's disabled on Hobby — see `docs/vault-sync-scheduling.md`.
+- **VaultRE integration:** read-only cache, sync function and Add-from-Vault picker are built. Hourly cron is Pro-only, so it remains disabled on Hobby — see `docs/vault-sync-scheduling.md`.
 
 ## Stack
 
@@ -52,7 +52,7 @@ Never commit `.env`. It's in `.gitignore`. Secrets go in the Vercel/Supabase das
 - **Per-listing sharing:** `listing_collaborators` grants `viewer` / `editor` / `co_owner`.
 - **DELETE is super_admin-only** across listings + all child tables (anti-leaver safety — an agent leaving can't destroy records).
 - **Admin override:** super_admins get a "view as agent" mode; every transition is written to `admin_access_log` (immutable, super_admin-readable).
-- Enforcement is RLS in Postgres; the React layer mirrors it for UX. RLS is enabled by `supabase/auth/15_enable_rls.sql` (the production flip is pending).
+- Enforcement is RLS in Postgres; the React layer mirrors it for UX. RLS was enabled on production with `supabase/auth/15_enable_rls.sql` on 2026-06-02.
 
 ## Database schema
 
@@ -60,7 +60,7 @@ Never commit `.env`. It's in `.gitignore`. Secrets go in the Vercel/Supabase das
 **Auth/RBAC tables:** `profiles`, `listing_collaborators`, `admin_access_log`.
 **Vault cache tables:** `vault_listings`, `vault_listing_agents`, `vault_sync_runs`, `vault_agent_aliases`.
 
-Ownership/audit columns (`owner_id`, `created_by`, `updated_by`) added to `listings` + children. Storage bucket: `listing-documents` (being flipped to **private** during the RLS migration so the storage policies actually enforce; files keyed by `listings/{listing_id}/{filename}`).
+Ownership/audit columns (`owner_id`, `created_by`, `updated_by`) are present on `listings` + children. Storage bucket `listing-documents` is **private** and files are keyed by `{listing_id}/{filename}`.
 
 ## Stage lifecycle
 
@@ -81,7 +81,7 @@ Fell-over reverts Under Contract / Unconditional / Settlement back to `launched_
 
 ## Deployment
 
-Live on Vercel (Hobby), behind Deployment Protection. `/api/*.js` run as Vercel serverless functions; the Vite plugin in `vite.config.js` only matters for local dev. Go-live checklist (Vercel Pro for the cron, prod RLS flip, env-var fixes, super_admin bootstrap) is tracked in **issue #20**.
+Live on Vercel (Hobby), behind Deployment Protection. `/api/*.js` run as Vercel serverless functions; the Vite plugin in `vite.config.js` only matters for local dev. The database migration and super-admin bootstrap are complete. Vercel Pro for the hourly Vault cron remains tracked in **issue #20**.
 
 ## Conventions
 
