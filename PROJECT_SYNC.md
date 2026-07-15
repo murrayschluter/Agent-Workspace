@@ -44,13 +44,14 @@ Staging verification covered all nine audit dimensions and passed 66 checks. Iss
 | #38 | `chore/ant-ci-baseline` | ESLint, Vitest and application CI | Draft, ready for Murray review |
 | #39 | `fix/ant-auth-state` | One auth subscription and retryable profile errors | Draft, ready for Murray review |
 | #40 | `feat/ant-vault-sync-status` | Vault freshness and failure indicator | Draft, ready for Murray review |
+| #42 | `chore/ant-route-code-splitting` | Lazy route loading and smaller initial bundle | Draft, ready for Murray review |
 
 PR #27 contains stale, conflicting coordination changes from before the production flip and should be closed as superseded.
 
 ## Required launch operations
 
 1. Replace `SUPABASE_ACCESS_TOKEN` in GitHub with a token belonging to an account that can query project `jdsbqfccdgipnlvcpgva`, then rerun Verify production RLS.
-2. Review and merge PRs #37–#40 in dependency-safe order: #38, #39, #37, #40. Resolve the small VaultPicker overlap between #37 and #40 when the second is rebased.
+2. Review and merge PRs #37–#40 and #42. Start with #38. PRs #39, #37 and #42 touch `App.jsx`, and PRs #37/#40 touch `VaultPicker.jsx`, so rebase each successive PR onto the updated `main` before merging it.
 3. Confirm the Vercel production deployment points to the production Supabase URL and publishable key and has all server-only secrets.
 4. Decide whether to upgrade Vercel to Pro. If yes, restore the hourly cron from `docs/vault-sync-scheduling.md`.
 5. Add recurring full backups or Supabase managed backups/PITR for production client data.

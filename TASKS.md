@@ -8,6 +8,7 @@
 - **[Murray] Review PR #38:** application lint, tests and build CI.
 - **[Murray] Review PR #39:** central authentication state and recovery.
 - **[Murray] Review PR #40:** Vault sync freshness indicator.
+- **[Murray] Review PR #42:** route-level code splitting.
 - **[Repo admin] Repair the production-RLS CI credential:** replace the current Supabase PAT with one that has Management API database-query access to `jdsbqfccdgipnlvcpgva`, then rerun the failed workflow.
 - **[Human decision] Vercel Pro:** upgrade and enable hourly Vault cron, or choose another scheduler.
 - **[Human decision] Production backups:** Supabase Pro/PITR or a recurring full `pg_dump` process.
@@ -23,7 +24,6 @@
 - Split `api/sync-vault-listings.js` into API client, mapping, persistence and handler modules.
 - Add error monitoring and sync-failure alerting.
 - Add a protected manual Vault sync action for administrators, without exposing `CRON_SECRET` to the browser.
-- Add route-level code splitting to reduce the current JavaScript bundle warning.
 
 ## Done
 
@@ -35,3 +35,4 @@
 - Application CI implementation published as draft PR #38.
 - Auth-state implementation published as draft PR #39.
 - Vault sync-status implementation published as draft PR #40.
+- Route code-splitting implementation published as draft PR #42; initial JavaScript reduced below Vite's warning threshold.
